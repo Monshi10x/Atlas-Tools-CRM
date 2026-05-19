@@ -1,0 +1,16 @@
+{
+  "name": "atlas-tools-crm-firebase",
+  "version": "1.5.0",
+  "description": "Firebase-hosted Atlas Tools CRM with supplied Atlas Tools logo and favicon.",
+  "type": "module",
+  "scripts": {
+    "serve": "firebase emulators:start",
+    "hosting": "firebase emulators:start --only hosting",
+    "deploy": "firebase deploy",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy:rules": "firebase deploy --only firestore:rules"
+  },
+  "devDependencies": {
+    "firebase-tools": "^13.35.1"
+  }
+}

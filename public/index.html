@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self' https://www.gstatic.com https://maps.googleapis.com https://maps.gstatic.com https://fonts.gstatic.com data: blob:; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://maps.gstatic.com https://maps.googleapis.com; connect-src 'self' https://www.gstatic.com https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://maps.googleapis.com https://maps.gstatic.com wss://*.firebaseio.com;"
+  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Atlas Tools CRM</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+  <link rel="icon" sizes="192x192" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <section id="loginScreen" class="login-screen">
+    <div class="panel login-panel">
+      <div class="brand login-brand">
+        <img class="brand-logo" src="assets/atlas-logo-header.png" alt="Atlas Tools logo" />
+        <div>
+          <h1>Atlas Tools CRM</h1>
+          <div class="subtitle">Firebase hosted CRM login</div>
+        </div>
+      </div>
+
+      <form id="loginForm">
+        <div class="form-row">
+          <label for="loginEmail">Email</label>
+          <input id="loginEmail" type="email" autocomplete="username" />
+        </div>
+
+        <div class="form-row">
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" />
+        </div>
+
+        <button class="btn primary full" id="loginButton" type="submit">Login</button>
+      </form>
+      <div id="loginMessage" class="muted"></div>
+    </div>
+  </section>
+
+  <div class="app-shell" id="appShell" style="display:none;">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/atlas-logo-header.png" alt="Atlas Tools logo" />
+        <div>
+          <h1>Atlas Tools CRM</h1>
+          <div class="subtitle">Firebase Hosting + Firestore + Google Maps</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="status-pill status-user">
+          <span id="fileStatus">Connecting...</span>
+          <span class="status-separator">|</span>
+          <span class="user-chip" title="Logged-in user">
+            <span class="person-icon" aria-hidden="true">●</span>
+            <span id="displayUserName">User</span>
+          </span>
+        </div>
+        <button class="btn ghost small" id="logoutButton">Logout</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-button active" data-tab="mapTab">Map</button>
+      <button class="tab-button" data-tab="customersTab">Customers</button>
+      <button class="tab-button" data-tab="editorTab">Add / Edit</button>
+      <button class="tab-button" data-tab="settingsTab">Settings</button>
+    </nav>
+
+    <section id="mapTab" class="tab-panel active">
+      <div class="grid two">
+        <aside class="panel">
+          <div class="panel-title">
+            <h2>Map Filters</h2>
+            <button class="btn primary small" data-action="new-customer">Add Customer</button>
+          </div>
+
+          <div class="form-row">
+            <label for="mapSearch">Search</label>
+            <input id="mapSearch" type="search" placeholder="Company, contact, address, notes..." />
+          </div>
+
+          <div class="form-row">
+            <label for="mapTypeFilter">Customer Type</label>
+            <select id="mapTypeFilter"></select>
+          </div>
+
+          <div class="form-row two">
+            <div>
+              <label for="mapStateFilter">State</label>
+              <input id="mapStateFilter" placeholder="QLD" />
+            </div>
+            <div>
+              <label for="mapSuburbFilter">Suburb</label>
+              <input id="mapSuburbFilter" placeholder="Underwood" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label for="mapStatusFilter">Status</label>
+            <select id="mapStatusFilter">
+              <option value="">All statuses</option>
+              <option>Lead</option>
+              <option>Active</option>
+              <option>Inactive</option>
+              <option>Do Not Contact</option>
+            </select>
+          </div>
+
+          <div class="toolbar">
+            <button class="btn ghost small" id="fitMap">Fit Map</button>
+            <button class="btn ghost small" id="clearFiltersMap">Clear Filters</button>
+          </div>
+
+          <div class="mini-card">
+            <div class="card-line"><strong>Total Customers:</strong> <span id="countCustomers">0</span></div>
+            <div class="card-line"><strong>Visible Customers:</strong> <span id="countVisibleCustomers">0</span></div>
+            <div class="card-line"><strong>Visible Address Pins:</strong> <span id="countVisiblePins">0</span></div>
+          </div>
+
+          <div class="warning">
+            Each address becomes a separate red map dot. Drag a marker to save custom coordinates.
+          </div>
+        </aside>
+
+        <main class="map-wrap">
+          <div id="map"></div>
+          <div id="mapMissing" class="map-missing">
+            <h2>Google Maps is not loaded</h2>
+            <p>Check Google Maps API restrictions and the Settings console.</p>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <section id="customersTab" class="tab-panel">
+      <div class="panel">
+        <div class="panel-title">
+          <h2>Customer Cards</h2>
+          <button class="btn primary small" data-action="new-customer">Add Customer</button>
+        </div>
+
+        <div class="toolbar">
+          <input class="grow" id="customerSearch" type="search" placeholder="Search customers..." />
+          <select id="customerTypeFilter"></select>
+          <select id="customerStatusFilter">
+            <option value="">All statuses</option>
+            <option>Lead</option>
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Do Not Contact</option>
+          </select>
+          <button class="btn ghost" id="clearFiltersCards">Clear</button>
+        </div>
+
+        <div id="customerCards" class="cards"></div>
+      </div>
+    </section>
+
+    <section id="editorTab" class="tab-panel">
+      <div class="panel">
+        <div class="panel-title">
+          <div>
+            <h2>Add / Edit Customer</h2>
+            <div class="muted">Use address search/autocomplete, geocode addresses, or drag the map marker after saving.</div>
+          </div>
+          <div class="toolbar compact">
+            <button class="btn ghost small" id="newCustomer">New Blank</button>
+            <button class="btn primary small" id="saveCustomer">Save Customer</button>
+          </div>
+        </div>
+
+        <div id="editorHost"></div>
+      </div>
+    </section>
+
+    <section id="settingsTab" class="tab-panel">
+      <div class="grid one">
+        <div class="panel">
+          <div class="panel-title">
+            <h2>Firebase Data</h2>
+          </div>
+
+          <div class="warning">
+            Customers and settings are now stored in Cloud Firestore. CSV and JSON imports write directly to Firestore.
+          </div>
+
+          <div class="toolbar">
+            <button class="btn ghost" id="importCsvButton">Import CSV</button>
+            <button class="btn ghost" id="exportCsvButton">Export CSV</button>
+            <button class="btn ghost" id="importJsonButton">Import JSON</button>
+          </div>
+
+          <input id="csvFileInput" type="file" accept=".csv,text/csv" hidden />
+          <input id="jsonFileInput" type="file" accept=".json,application/json" hidden />
+
+          <div class="mini-card">
+            <div class="card-line"><strong>Signed in as:</strong> <span id="signedInUser">-</span></div>
+            <div class="card-line"><strong>Last Sync:</strong> <span id="lastUpdated">-</span></div>
+          </div>
+        </div>
+
+
+      </div>
+
+      <div class="panel margin-top console-panel">
+        <div class="panel-title accordion-title">
+          <button class="accordion-toggle" id="toggleConsole" aria-expanded="false" aria-controls="consoleBody">
+            <span class="accordion-arrow" id="consoleArrow">▶</span>
+            <span>
+              <span class="accordion-heading">App Console</span>
+              <span class="muted block">Google Maps, Firebase and import errors appear here.</span>
+            </span>
+          </button>
+          <div class="toolbar compact">
+            <button class="btn ghost small" id="copyConsole">Copy Console</button>
+            <button class="btn danger small" id="clearConsole">Clear Console</button>
+          </div>
+        </div>
+        <div id="consoleBody" class="accordion-body collapsed">
+          <pre id="appConsole" class="app-console"></pre>
+        </div>
+      </div>
+
+      <div class="panel margin-top">
+        <div class="panel-title">
+          <div>
+            <h2>Editable Customer Types</h2>
+            <div class="muted">Stored in Firestore at settings/global.</div>
+          </div>
+          <button class="btn primary small" id="addCustomerType">Add Type</button>
+        </div>
+        <div id="customerTypesHost" class="nested-list"></div>
+        <button class="btn primary" id="saveCustomerTypes">Save Customer Types</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="modalTitle">Customer</h2>
+          <div class="muted">View customer details from the map pin.</div>
+        </div>
+        <button class="btn ghost small" id="closeModal">Close</button>
+      </div>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>
