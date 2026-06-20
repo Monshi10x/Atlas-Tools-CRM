@@ -60,6 +60,7 @@ let mapReady = false;
 let mapInitialising = false;
 let settingsSaveTimer = null;
 let editorCleanSnapshot = "";
+let activeMovePin = null;
 
 const defaultCenter = { lat: -27.609, lng: 153.111 };
 
@@ -230,19 +231,25 @@ function bindEvents() {
 }
 
 function handleDocumentClick(event) {
-  const action = event.target?.dataset?.action;
+  const target = event.target?.closest?.("[data-action]");
+  const action = target?.dataset?.action;
   if (!action) return;
 
+  if (target.tagName === "BUTTON") event.stopPropagation();
+
   if (action === "new-customer") newCustomer();
-  if (action === "edit-customer") editCustomer(event.target.dataset.id);
-  if (action === "delete-customer") deleteCustomer(event.target.dataset.id);
-  if (action === "focus-customer") focusCustomerOnMap(event.target.dataset.id);
-  if (action === "open-customer") openCustomerDetails(event.target.dataset.id);
-  if (action === "remove-contact") removeEditorContact(Number(event.target.dataset.index));
-  if (action === "remove-address") removeEditorAddress(Number(event.target.dataset.index));
-  if (action === "geocode-address") geocodeEditorAddress(Number(event.target.dataset.index));
-  if (action === "remove-type") removeCustomerType(Number(event.target.dataset.index));
-  if (action === "remove-status") removeCustomerStatus(Number(event.target.dataset.index));
+  if (action === "edit-customer") editCustomer(target.dataset.id);
+  if (action === "delete-customer") deleteCustomer(target.dataset.id);
+  if (action === "focus-customer") focusCustomerOnMap(target.dataset.id);
+  if (action === "open-customer") openCustomerDetails(target.dataset.id);
+  if (action === "remove-contact") removeEditorContact(Number(target.dataset.index));
+  if (action === "contact-prev") scrollContactTiles(-1);
+  if (action === "contact-next") scrollContactTiles(1);
+  if (action === "remove-address") removeEditorAddress(Number(target.dataset.index));
+  if (action === "geocode-address") geocodeEditorAddress(Number(target.dataset.index));
+  if (action === "move-pin") enablePinMove(target.dataset.customerId, target.dataset.addressId);
+  if (action === "remove-type") removeCustomerType(Number(target.dataset.index));
+  if (action === "remove-status") removeCustomerStatus(Number(target.dataset.index));
 }
 
 async function login() {
@@ -505,7 +512,7 @@ function renderCustomerCards() {
   }
 
   host.innerHTML = customers.map(c => `
-    <article class="customer-card">
+    <article class="customer-card clickable-card" data-action="open-customer" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="View ${esc(c.companyName || "customer")} details">
       <div class="customer-card-title">
         <div>
           <h3>${esc(c.companyName || "Unnamed Company")}</h3>
@@ -598,7 +605,11 @@ function renderEditor() {
         <h3>Contact People</h3>
         <button class="btn primary small" id="addContactButton">Add Contact</button>
       </div>
-      <div id="editorContacts" class="nested-list"></div>
+      <div class="contact-carousel-controls">
+        <button class="btn ghost small" data-action="contact-prev" type="button">Prev</button>
+        <button class="btn ghost small" data-action="contact-next" type="button">Next</button>
+      </div>
+      <div id="editorContacts" class="contact-tiles"></div>
     </div>
 
     <div class="panel margin-top">
@@ -1107,9 +1118,55 @@ async function initMap() {
   }
 }
 
+
+function scrollContactTiles(direction) {
+  const host = document.getElementById("editorContacts");
+  if (!host) return;
+
+  const card = host.querySelector(".contact-card");
+  const amount = card ? card.getBoundingClientRect().width + 14 : host.clientWidth;
+  host.scrollBy({ left: direction * amount, behavior: "smooth" });
+}
+
+function disablePinMove() {
+  if (!activeMovePin) return;
+
+  clearInterval(activeMovePin.timer);
+  activeMovePin.marker.setDraggable(false);
+  activeMovePin.marker.setIcon(activeMovePin.baseIcon);
+  activeMovePin = null;
+}
+
+function enablePinMove(customerId, addressId) {
+  const marker = markers.find(m => m.customerId === customerId && m.addressId === addressId);
+  if (!marker) {
+    toast("Could not find that map pin.");
+    return;
+  }
+
+  disablePinMove();
+
+  const baseIcon = marker.baseIcon || marker.getIcon();
+  let large = false;
+  const timer = setInterval(() => {
+    large = !large;
+    marker.setIcon({
+      ...baseIcon,
+      scale: large ? 12 : 7,
+      fillColor: large ? "#dca101" : baseIcon.fillColor
+    });
+  }, 520);
+
+  marker.setDraggable(true);
+  activeMovePin = { marker, baseIcon, timer };
+  infoWindow.close();
+  toast("Move mode enabled. Drag the pulsing pin to save its new location.");
+}
+
 function renderMapMarkers() {
   if (!map || !window.google?.maps) return;
 
+  disablePinMove();
   markers.forEach(m => m.setMap(null));
   markers = [];
 
@@ -1122,7 +1179,7 @@ function renderMapMarkers() {
       const marker = new google.maps.Marker({
         position: { lat: Number(address.lat), lng: Number(address.lng) },
         map,
-        draggable: true,
+        draggable: false,
         title: `${customer.companyName} - ${address.label || "Address"}`,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
@@ -1144,10 +1201,15 @@ function renderMapMarkers() {
             <p><strong>Email:</strong> ${esc(customer.email || "-")}</p>
             <p><strong>Address:</strong> ${esc(formatAddress(address) || "-")}</p>
             <button data-action="open-customer" data-id="${esc(customer.id)}">View / Edit Customer</button>
+            <button data-action="move-pin" data-customer-id="${esc(customer.id)}" data-address-id="${esc(address.id)}">Move Pin</button>
           </div>
         `);
         infoWindow.open({ map, anchor: marker });
       });
+
+      marker.customerId = customer.id;
+      marker.addressId = address.id;
+      marker.baseIcon = marker.getIcon();
 
       marker.addListener("dragend", async () => {
         const pos = marker.getPosition();
@@ -1159,6 +1221,7 @@ function renderMapMarkers() {
             addresses: customer.addresses,
             updatedAt: serverTimestamp()
           }, { merge: true });
+          disablePinMove();
           toast("Marker coordinates saved.");
         } catch (error) {
           console.error("Marker coordinate save failed:", error);

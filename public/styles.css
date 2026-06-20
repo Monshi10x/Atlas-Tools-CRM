@@ -397,9 +397,9 @@ textarea { min-height: 84px; resize: vertical; }
 
 .contact-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
   gap: 12px;
-  align-items: center;
+  align-items: start;
   border: 1px solid #000;
   border-radius: 16px;
   padding: 12px;
@@ -421,22 +421,84 @@ textarea { min-height: 84px; resize: vertical; }
 
 .contact-fields-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(115px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
+  width: 100%;
 }
 
-@media (max-width: 1100px) {
-  .contact-card { grid-template-columns: auto minmax(0, 1fr); }
-  .contact-card .btn { grid-column: 1 / -1; justify-self: start; }
-  .contact-fields-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 720px) {
-  .contact-fields-row { grid-template-columns: 1fr; }
+.contact-card .btn {
+  justify-self: start;
 }
 
 .btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
   transform: none;
+}
+
+.clickable-card {
+  cursor: pointer;
+}
+
+.clickable-card:focus-visible {
+  outline: 2px solid var(--atlas-yellow);
+  outline-offset: 3px;
+}
+
+.contact-carousel-controls {
+  display: none;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.contact-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.contact-tiles .empty-state {
+  grid-column: 1 / -1;
+}
+
+.contact-tiles .contact-card {
+  min-width: 0;
+}
+
+.map-info button + button {
+  margin-left: 6px;
+}
+
+@media (max-width: 1180px) {
+  .contact-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .contact-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .contact-carousel-controls {
+    display: flex;
+  }
+
+  .contact-tiles {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    padding-bottom: 8px;
+  }
+
+  .contact-tiles .contact-card,
+  .contact-tiles .empty-state {
+    flex: 0 0 86%;
+    scroll-snap-align: start;
+  }
 }
