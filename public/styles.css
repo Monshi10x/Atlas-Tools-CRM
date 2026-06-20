@@ -339,3 +339,166 @@ textarea { min-height: 84px; resize: vertical; }
   object-fit: contain;
   padding: 3px;
 }
+
+
+.settings-edit-grid {
+  align-items: start;
+}
+
+.compact-settings-panel {
+  min-height: 320px;
+}
+
+.settings-scroll-list {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px 6px 4px 0;
+}
+
+.settings-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #000;
+  border-radius: 12px;
+  padding: 8px;
+  background: #242424;
+  box-shadow: var(--chip-shadow);
+}
+
+.settings-list-row input {
+  padding: 8px 10px;
+}
+
+.settings-list-row.locked input {
+  color: var(--atlas-muted);
+  background: #1f1f1f;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+@keyframes savePulse {
+  0%, 100% { transform: scale(1); box-shadow: var(--chip-shadow); }
+  50% { transform: scale(1.045); box-shadow: 0 0 0 5px rgba(220,161,1,0.22), var(--chip-shadow); }
+}
+
+.btn.needs-save {
+  animation: savePulse 1.1s ease-in-out infinite;
+}
+
+.contact-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid #000;
+  border-radius: 16px;
+  padding: 12px;
+  background: #242424;
+  box-shadow: var(--chip-shadow);
+}
+
+.contact-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--atlas-yellow);
+  color: #000;
+  font-size: 26px;
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.45);
+}
+
+.contact-fields-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.contact-card .btn {
+  justify-self: start;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.clickable-card {
+  cursor: pointer;
+}
+
+.clickable-card:focus-visible {
+  outline: 2px solid var(--atlas-yellow);
+  outline-offset: 3px;
+}
+
+.contact-carousel-controls {
+  display: none;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.contact-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.contact-tiles .empty-state {
+  grid-column: 1 / -1;
+}
+
+.contact-tiles .contact-card {
+  min-width: 0;
+}
+
+.map-info button + button {
+  margin-left: 6px;
+}
+
+@media (max-width: 1180px) {
+  .contact-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .contact-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .contact-carousel-controls {
+    display: flex;
+  }
+
+  .contact-tiles {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    padding-bottom: 8px;
+  }
+
+  .contact-tiles .contact-card,
+  .contact-tiles .empty-state {
+    flex: 0 0 86%;
+    scroll-snap-align: start;
+  }
+}
