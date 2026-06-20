@@ -50,6 +50,14 @@
           <div class="subtitle">Firebase Hosting + Firestore + Google Maps</div>
         </div>
       </div>
+      <nav class="tabs" id="tabsNav" aria-label="Pages">
+        <button class="tab-button active" data-tab="mapTab">Map</button>
+        <button class="tab-button" data-tab="customersTab">Customers</button>
+        <button class="tab-button" data-tab="wipTab">WIP</button>
+        <button class="tab-button" data-tab="editorTab">Add / Edit</button>
+        <button class="tab-button" data-tab="settingsTab">Settings</button>
+      </nav>
+
       <div class="topbar-actions">
         <div class="status-pill status-user">
           <span id="fileStatus">Connecting...</span>
@@ -60,16 +68,9 @@
           </span>
         </div>
         <button class="btn ghost small" id="logoutButton">Logout</button>
+        <button class="btn ghost small hamburger" id="menuToggle" type="button" aria-controls="tabsNav" aria-expanded="false" aria-label="Open page menu">☰</button>
       </div>
     </header>
-
-    <nav class="tabs">
-      <button class="tab-button active" data-tab="mapTab">Map</button>
-      <button class="tab-button" data-tab="customersTab">Customers</button>
-      <button class="tab-button" data-tab="wipTab">WIP</button>
-      <button class="tab-button" data-tab="editorTab">Add / Edit</button>
-      <button class="tab-button" data-tab="settingsTab">Settings</button>
-    </nav>
 
     <section id="mapTab" class="tab-panel active">
       <div class="grid two">

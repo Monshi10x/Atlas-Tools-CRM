@@ -192,8 +192,13 @@ function bindEvents() {
   bindIfExists("logoutButton", "click", () => signOut(auth));
 
   document.querySelectorAll(".tab-button").forEach(btn => {
-    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    btn.addEventListener("click", () => {
+      switchTab(btn.dataset.tab);
+      closePageMenu();
+    });
   });
+
+  bindIfExists("menuToggle", "click", togglePageMenu);
 
   document.addEventListener("click", handleDocumentClick);
 
@@ -232,6 +237,18 @@ function bindEvents() {
   bindIfExists("modal", "click", (e) => {
     if (e.target.id === "modal") closeModal();
   });
+}
+
+function togglePageMenu() {
+  const nav = document.getElementById("tabsNav");
+  const button = document.getElementById("menuToggle");
+  const isOpen = nav?.classList.toggle("open");
+  button?.setAttribute("aria-expanded", String(Boolean(isOpen)));
+}
+
+function closePageMenu() {
+  document.getElementById("tabsNav")?.classList.remove("open");
+  document.getElementById("menuToggle")?.setAttribute("aria-expanded", "false");
 }
 
 function handleDocumentClick(event) {
