@@ -505,6 +505,10 @@ textarea { min-height: 84px; resize: vertical; }
 
 .wip-panel {
   overflow: hidden;
+  height: calc(100vh - 150px);
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
 }
 
 .wip-board {
@@ -513,14 +517,19 @@ textarea { min-height: 84px; resize: vertical; }
   grid-auto-columns: minmax(260px, 1fr);
   gap: 14px;
   overflow-x: auto;
+  overflow-y: hidden;
   padding: 4px 4px 14px;
-  min-height: calc(100vh - 260px);
+  min-height: 0;
+  flex: 1;
+  cursor: grab;
+  user-select: none;
 }
 
 .wip-column {
   display: flex;
   flex-direction: column;
-  min-height: 420px;
+  min-height: 0;
+  max-height: 100%;
   border: 1px solid #000;
   border-radius: 16px;
   background: linear-gradient(180deg, #2f2f2f 0%, #242424 100%);
@@ -552,7 +561,17 @@ textarea { min-height: 84px; resize: vertical; }
   align-content: start;
   gap: 10px;
   padding: 12px;
-  min-height: 340px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.wip-toolbar {
+  margin-bottom: 12px;
+}
+
+.wip-board.is-panning {
+  cursor: grabbing;
 }
 
 .wip-card {
@@ -565,6 +584,8 @@ textarea { min-height: 84px; resize: vertical; }
   color: #111;
   padding: 10px;
   min-height: 48px;
+  max-width: 100%;
+  overflow: hidden;
   box-shadow: 4px 6px 9px rgba(0,0,0,0.36);
   cursor: grab;
 }

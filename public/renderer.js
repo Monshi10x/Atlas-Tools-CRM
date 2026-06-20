@@ -198,7 +198,7 @@ function bindEvents() {
   document.addEventListener("click", handleDocumentClick);
 
   ["mapSearch", "mapTypeFilter", "mapStateFilter", "mapSuburbFilter", "mapStatusFilter",
-   "customerSearch", "customerTypeFilter", "customerStatusFilter"].forEach(id => {
+   "customerSearch", "customerTypeFilter", "customerStatusFilter", "wipSearch"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) {
       console.warn(`Filter element #${id} was not found.`);
@@ -223,6 +223,7 @@ function bindEvents() {
   bindIfExists("toggleConsole", "click", toggleConsole);
   bindIfExists("clearConsole", "click", () => { appConsoleEntries = []; renderAppConsole(); });
   bindIfExists("copyConsole", "click", copyConsole);
+  bindWipBoardPanning();
   bindIfExists("addCustomerType", "click", addCustomerType);
   bindIfExists("addCustomerStatus", "click", addCustomerStatus);
   bindIfExists("addWipColumn", "click", addWipColumn);
@@ -504,7 +505,7 @@ function getVisibleCustomers(prefix = "customer") {
 
 function clearFilters() {
   ["mapSearch", "mapTypeFilter", "mapStateFilter", "mapSuburbFilter", "mapStatusFilter",
-   "customerSearch", "customerTypeFilter", "customerStatusFilter"].forEach(id => {
+   "customerSearch", "customerTypeFilter", "customerStatusFilter", "wipSearch"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
@@ -1377,6 +1378,43 @@ async function saveSettings() {
   }
 }
 
+
+function bindWipBoardPanning() {
+  const board = document.getElementById("wipBoard");
+  if (!board) return;
+
+  let isPanning = false;
+  let startX = 0;
+  let startScrollLeft = 0;
+
+  board.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".wip-card")) return;
+
+    isPanning = true;
+    startX = event.clientX;
+    startScrollLeft = board.scrollLeft;
+    board.classList.add("is-panning");
+    board.setPointerCapture(event.pointerId);
+  });
+
+  board.addEventListener("pointermove", (event) => {
+    if (!isPanning) return;
+    event.preventDefault();
+    board.scrollLeft = startScrollLeft - (event.clientX - startX);
+  });
+
+  const endPan = (event) => {
+    if (!isPanning) return;
+    isPanning = false;
+    board.classList.remove("is-panning");
+    if (board.hasPointerCapture(event.pointerId)) board.releasePointerCapture(event.pointerId);
+  };
+
+  board.addEventListener("pointerup", endPan);
+  board.addEventListener("pointercancel", endPan);
+  board.addEventListener("pointerleave", endPan);
+}
+
 function renderWipBoard() {
   const host = document.getElementById("wipBoard");
   if (!host) return;
@@ -1409,8 +1447,11 @@ function renderWipBoard() {
 }
 
 function getCustomersForWipColumn(column) {
+  const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
+
   return db.customers
     .filter(c => (c.wipColumn || db.settings.wipColumns[0]) === column)
+    .filter(c => !search || String(c.companyName || "").toLowerCase().includes(search))
     .sort((a, b) => (Number(a.wipOrder) || 0) - (Number(b.wipOrder) || 0) || (a.companyName || "").localeCompare(b.companyName || ""));
 }
 
