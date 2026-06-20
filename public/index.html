@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self' https://www.gstatic.com https://maps.googleapis.com https://maps.gstatic.com https://fonts.gstatic.com data: blob:; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://maps.gstatic.com https://maps.googleapis.com; connect-src 'self' https://www.gstatic.com https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://maps.googleapis.com https://maps.gstatic.com wss://*.firebaseio.com;"
+    content="default-src 'self' https://www.gstatic.com https://maps.googleapis.com https://maps.gstatic.com https://fonts.gstatic.com data: blob:; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://*.googleapis.com https://*.gstatic.com https://maps.gstatic.com https://maps.googleapis.com; connect-src 'self' https://www.gstatic.com https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://maps.googleapis.com https://maps.gstatic.com wss://*.firebaseio.com;"
   />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Atlas Tools CRM</title>
@@ -50,6 +50,14 @@
           <div class="subtitle">Firebase Hosting + Firestore + Google Maps</div>
         </div>
       </div>
+      <nav class="tabs" id="tabsNav" aria-label="Pages">
+        <button class="tab-button active" data-tab="mapTab">Map</button>
+        <button class="tab-button" data-tab="customersTab">Customers</button>
+        <button class="tab-button" data-tab="wipTab">WIP</button>
+        <button class="tab-button" data-tab="editorTab">Add / Edit</button>
+        <button class="tab-button" data-tab="settingsTab">Settings</button>
+      </nav>
+
       <div class="topbar-actions">
         <div class="status-pill status-user">
           <span id="fileStatus">Connecting...</span>
@@ -60,15 +68,9 @@
           </span>
         </div>
         <button class="btn ghost small" id="logoutButton">Logout</button>
+        <button class="btn ghost small hamburger" id="menuToggle" type="button" aria-controls="tabsNav" aria-expanded="false" aria-label="Open page menu">☰</button>
       </div>
     </header>
-
-    <nav class="tabs">
-      <button class="tab-button active" data-tab="mapTab">Map</button>
-      <button class="tab-button" data-tab="customersTab">Customers</button>
-      <button class="tab-button" data-tab="editorTab">Add / Edit</button>
-      <button class="tab-button" data-tab="settingsTab">Settings</button>
-    </nav>
 
     <section id="mapTab" class="tab-panel active">
       <div class="grid two">
@@ -101,13 +103,7 @@
 
           <div class="form-row">
             <label for="mapStatusFilter">Status</label>
-            <select id="mapStatusFilter">
-              <option value="">All statuses</option>
-              <option>Lead</option>
-              <option>Active</option>
-              <option>Inactive</option>
-              <option>Do Not Contact</option>
-            </select>
+            <select id="mapStatusFilter"></select>
           </div>
 
           <div class="toolbar">
@@ -146,17 +142,28 @@
         <div class="toolbar">
           <input class="grow" id="customerSearch" type="search" placeholder="Search customers..." />
           <select id="customerTypeFilter"></select>
-          <select id="customerStatusFilter">
-            <option value="">All statuses</option>
-            <option>Lead</option>
-            <option>Active</option>
-            <option>Inactive</option>
-            <option>Do Not Contact</option>
-          </select>
+          <select id="customerStatusFilter"></select>
           <button class="btn ghost" id="clearFiltersCards">Clear</button>
         </div>
 
         <div id="customerCards" class="cards"></div>
+      </div>
+    </section>
+
+
+    <section id="wipTab" class="tab-panel">
+      <div class="panel wip-panel">
+        <div class="panel-title">
+          <div>
+            <h2>WIP Board</h2>
+            <div class="muted">Drag customer cards between columns or reorder them within a column.</div>
+          </div>
+          <button class="btn primary small" data-action="new-customer">Add Customer</button>
+        </div>
+        <div class="toolbar wip-toolbar">
+          <input class="grow" id="wipSearch" type="search" placeholder="Search WIP customers by name..." />
+        </div>
+        <div id="wipBoard" class="wip-board"></div>
       </div>
     </section>
 
@@ -225,16 +232,39 @@
         </div>
       </div>
 
-      <div class="panel margin-top">
-        <div class="panel-title">
-          <div>
-            <h2>Editable Customer Types</h2>
-            <div class="muted">Stored in Firestore at settings/global.</div>
+      <div class="grid three margin-top settings-edit-grid">
+        <div class="panel compact-settings-panel">
+          <div class="panel-title">
+            <div>
+              <h2>Editable Customer Types</h2>
+              <div class="muted">Autosaves to Firestore. “Other” cannot be deleted.</div>
+            </div>
+            <button class="btn primary small" id="addCustomerType">Add Type</button>
           </div>
-          <button class="btn primary small" id="addCustomerType">Add Type</button>
+          <div id="customerTypesHost" class="settings-scroll-list"></div>
         </div>
-        <div id="customerTypesHost" class="nested-list"></div>
-        <button class="btn primary" id="saveCustomerTypes">Save Customer Types</button>
+
+        <div class="panel compact-settings-panel">
+          <div class="panel-title">
+            <div>
+              <h2>Editable Statuses</h2>
+              <div class="muted">Autosaves to Firestore. “Lead” cannot be deleted.</div>
+            </div>
+            <button class="btn primary small" id="addCustomerStatus">Add Status</button>
+          </div>
+          <div id="customerStatusesHost" class="settings-scroll-list"></div>
+        </div>
+
+        <div class="panel compact-settings-panel">
+          <div class="panel-title">
+            <div>
+              <h2>WIP Columns</h2>
+              <div class="muted">Autosaves to Firestore. These columns drive the WIP board.</div>
+            </div>
+            <button class="btn primary small" id="addWipColumn">Add Column</button>
+          </div>
+          <div id="wipColumnsHost" class="settings-scroll-list"></div>
+        </div>
       </div>
     </section>
   </div>
@@ -254,6 +284,7 @@
 
   <div id="toast" class="toast"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
   <script type="module" src="renderer.js"></script>
 </body>
 </html>
