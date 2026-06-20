@@ -40,6 +40,7 @@ let db = {
       "Other"
     ],
     customerStatuses: ["Lead", "Active", "Inactive", "Do Not Contact"],
+    wipColumns: ["un-allocated", "samples sent", "lead to be contacted"],
     googleMapsApiKey: mapsApiKey
   },
   customers: []
@@ -61,6 +62,7 @@ let mapInitialising = false;
 let settingsSaveTimer = null;
 let editorCleanSnapshot = "";
 let activeMovePin = null;
+let wipSortableInstances = [];
 
 const defaultCenter = { lat: -27.609, lng: 153.111 };
 
@@ -223,6 +225,7 @@ function bindEvents() {
   bindIfExists("copyConsole", "click", copyConsole);
   bindIfExists("addCustomerType", "click", addCustomerType);
   bindIfExists("addCustomerStatus", "click", addCustomerStatus);
+  bindIfExists("addWipColumn", "click", addWipColumn);
 
   bindIfExists("closeModal", "click", closeModal);
   bindIfExists("modal", "click", (e) => {
@@ -250,6 +253,7 @@ function handleDocumentClick(event) {
   if (action === "move-pin") enablePinMove(target.dataset.customerId, target.dataset.addressId);
   if (action === "remove-type") removeCustomerType(Number(target.dataset.index));
   if (action === "remove-status") removeCustomerStatus(Number(target.dataset.index));
+  if (action === "remove-wip-column") removeWipColumn(Number(target.dataset.index));
 }
 
 async function login() {
@@ -282,6 +286,7 @@ async function ensureDefaultSettings() {
     await setDoc(ref, {
       customerTypes: ensureOtherType(db.settings.customerTypes),
       customerStatuses: ensureLeadStatus(db.settings.customerStatuses),
+      wipColumns: ensureWipColumns(db.settings.wipColumns),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
@@ -298,6 +303,7 @@ function startFirestoreListeners() {
       ...data,
       customerTypes: ensureOtherType(data.customerTypes || db.settings.customerTypes),
       customerStatuses: ensureLeadStatus(data.customerStatuses || db.settings.customerStatuses),
+      wipColumns: ensureWipColumns(data.wipColumns || db.settings.wipColumns),
       googleMapsApiKey: mapsApiKey
     };
     renderEditor();
@@ -318,6 +324,8 @@ function normalizeCustomer(c = {}) {
     companyName: c.companyName || "",
     customerType: c.customerType || db?.settings?.customerTypes?.[0] || "Other",
     status: c.status || db?.settings?.customerStatuses?.[0] || "Lead",
+    wipColumn: c.wipColumn || db?.settings?.wipColumns?.[0] || "un-allocated",
+    wipOrder: Number.isFinite(Number(c.wipOrder)) ? Number(c.wipOrder) : 0,
     phone: c.phone || "",
     email: c.email || "",
     notes: c.notes || "",
@@ -425,6 +433,7 @@ function renderAll() {
   renderStatusSelects();
   renderCustomerCards();
   renderCustomerTypes();
+  renderWipBoard();
   renderMapMarkers();
   renderStats();
 }
@@ -922,6 +931,8 @@ async function saveEditorCustomer() {
       email: x.email || "",
       role: x.role || ""
     })),
+    wipColumn: c.wipColumn || db.settings.wipColumns[0] || "un-allocated",
+    wipOrder: Number.isFinite(Number(c.wipOrder)) ? Number(c.wipOrder) : 0,
     addresses: c.addresses.map(a => ({
       id: a.id || uid(),
       label: a.label || "Main",
@@ -1335,6 +1346,12 @@ function ensureLeadStatus(statuses = []) {
   return clean;
 }
 
+
+function ensureWipColumns(columns = []) {
+  const clean = [...new Set(columns.map(x => String(x || "").trim()).filter(Boolean))];
+  return clean.length ? clean : ["un-allocated", "samples sent", "lead to be contacted"];
+}
+
 function scheduleSettingsSave() {
   clearTimeout(settingsSaveTimer);
   settingsSaveTimer = setTimeout(saveSettings, 450);
@@ -1343,11 +1360,13 @@ function scheduleSettingsSave() {
 async function saveSettings() {
   db.settings.customerTypes = ensureOtherType(db.settings.customerTypes);
   db.settings.customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
+  db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
 
   try {
     await setDoc(doc(firestore, "settings", "global"), {
       customerTypes: db.settings.customerTypes,
       customerStatuses: db.settings.customerStatuses,
+      wipColumns: db.settings.wipColumns,
       updatedAt: serverTimestamp()
     }, { merge: true });
 
@@ -1355,6 +1374,103 @@ async function saveSettings() {
   } catch (error) {
     console.error("Settings save failed:", error);
     toast("Settings autosave failed.");
+  }
+}
+
+function renderWipBoard() {
+  const host = document.getElementById("wipBoard");
+  if (!host) return;
+
+  destroyWipSortables();
+  const columns = ensureWipColumns(db.settings.wipColumns);
+  db.settings.wipColumns = columns;
+
+  host.innerHTML = columns.map(column => {
+    const customers = getCustomersForWipColumn(column);
+    return `
+      <section class="wip-column">
+        <div class="wip-column-header">
+          <h3>${esc(column)}</h3>
+          <span class="badge">${customers.length}</span>
+        </div>
+        <div class="wip-column-list" data-wip-column="${esc(column)}">
+          ${customers.map(c => `
+            <article class="wip-card" data-id="${esc(c.id)}" data-action="open-customer">
+              <span class="wip-drag-handle" aria-hidden="true">⋮⋮</span>
+              <strong>${esc(c.companyName || "Unnamed Company")}</strong>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  initWipSortables();
+}
+
+function getCustomersForWipColumn(column) {
+  return db.customers
+    .filter(c => (c.wipColumn || db.settings.wipColumns[0]) === column)
+    .sort((a, b) => (Number(a.wipOrder) || 0) - (Number(b.wipOrder) || 0) || (a.companyName || "").localeCompare(b.companyName || ""));
+}
+
+function destroyWipSortables() {
+  wipSortableInstances.forEach(instance => instance.destroy());
+  wipSortableInstances = [];
+}
+
+function initWipSortables() {
+  if (!window.Sortable) {
+    console.warn("SortableJS is not loaded yet; WIP drag/drop is disabled until it loads.");
+    return;
+  }
+
+  document.querySelectorAll(".wip-column-list").forEach(list => {
+    wipSortableInstances.push(window.Sortable.create(list, {
+      group: "atlas-wip-board",
+      animation: 150,
+      ghostClass: "wip-card-ghost",
+      chosenClass: "wip-card-chosen",
+      dragClass: "wip-card-drag",
+      onEnd: saveWipBoardOrder
+    }));
+  });
+}
+
+async function saveWipBoardOrder() {
+  const batch = writeBatch(firestore);
+  let writes = 0;
+
+  document.querySelectorAll(".wip-column-list").forEach(list => {
+    const column = list.dataset.wipColumn;
+    [...list.querySelectorAll(".wip-card")].forEach((card, index) => {
+      const id = card.dataset.id;
+      if (!id) return;
+
+      const customer = db.customers.find(c => c.id === id);
+      if (customer) {
+        customer.wipColumn = column;
+        customer.wipOrder = index;
+      }
+
+      batch.set(doc(firestore, "customers", id), {
+        wipColumn: column,
+        wipOrder: index,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      writes += 1;
+    });
+  });
+
+  if (!writes) return;
+
+  try {
+    await batch.commit();
+    toast("WIP board updated.");
+  } catch (error) {
+    console.error("WIP board save failed:", error);
+    toast("WIP board save failed.");
+    renderWipBoard();
   }
 }
 
@@ -1374,6 +1490,7 @@ function renderCustomerTypes() {
     }
   });
   renderCustomerStatuses();
+  renderWipColumnsSettings();
 }
 
 function renderCustomerStatuses() {
@@ -1393,7 +1510,72 @@ function renderCustomerStatuses() {
   });
 }
 
-function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, removeAction, onInput }) {
+function renderWipColumnsSettings() {
+  renderSettingsList({
+    hostId: "wipColumnsHost",
+    items: db.settings.wipColumns,
+    lockedValue: null,
+    label: "WIP column",
+    inputAttr: "data-wip-column-index",
+    removeAction: "remove-wip-column",
+    onInput(index, value) {
+      const oldColumn = db.settings.wipColumns[index];
+      db.settings.wipColumns[index] = value;
+      db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
+      updateCustomersForRenamedWipColumn(oldColumn, value);
+      renderWipBoard();
+      scheduleSettingsSave();
+    },
+    async onBlur(input, index) {
+      const oldColumn = input.dataset.originalValue;
+      const newColumn = db.settings.wipColumns[index];
+      if (oldColumn && newColumn && oldColumn !== newColumn) {
+        updateCustomersForRenamedWipColumn(oldColumn, newColumn);
+        await reassignCustomers("wipColumn", oldColumn, newColumn);
+        input.dataset.originalValue = newColumn;
+      }
+    }
+  });
+}
+
+function addWipColumn() {
+  db.settings.wipColumns.push("New WIP Column");
+  db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
+  renderAll();
+  scheduleSettingsSave();
+}
+
+function removeWipColumn(index) {
+  const column = db.settings.wipColumns[index];
+  if (!column || db.settings.wipColumns.length <= 1) {
+    toast("At least one WIP column is required.");
+    return;
+  }
+
+  const fallback = db.settings.wipColumns.find((_, i) => i !== index) || "un-allocated";
+  const affected = db.customers.filter(c => c.wipColumn === column);
+
+  showConfirmModal({
+    title: "Remove WIP column?",
+    message: `Remove “${column}”? ${affected.length} customer(s) in this column will move to “${fallback}”.`,
+    onConfirm: async () => {
+      db.settings.wipColumns.splice(index, 1);
+      db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
+      await reassignCustomers("wipColumn", column, fallback);
+      await saveSettings();
+      renderAll();
+    }
+  });
+}
+
+function updateCustomersForRenamedWipColumn(oldColumn, newColumn) {
+  if (!oldColumn || !newColumn || oldColumn === newColumn) return;
+  db.customers.forEach(c => {
+    if (c.wipColumn === oldColumn) c.wipColumn = newColumn;
+  });
+}
+
+function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, removeAction, onInput, onBlur }) {
   const host = document.getElementById(hostId);
   if (!host) return;
 
@@ -1403,7 +1585,7 @@ function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, remo
       <div class="settings-list-row ${locked ? "locked" : ""}">
         <div>
           <label>${esc(label)}</label>
-          <input value="${esc(item)}" ${inputAttr}="${i}" ${locked ? "readonly" : ""} />
+          <input value="${esc(item)}" ${inputAttr}="${i}" data-original-value="${esc(item)}" ${locked ? "readonly" : ""} />
         </div>
         <button class="btn danger small" data-action="${removeAction}" data-index="${i}" ${locked ? "disabled" : ""}>Remove</button>
       </div>
@@ -1412,11 +1594,13 @@ function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, remo
 
   host.querySelectorAll(`[${inputAttr}]`).forEach(input => {
     input.addEventListener("input", () => onInput(Number(input.getAttribute(inputAttr)), input.value));
-    input.addEventListener("blur", () => {
+    input.addEventListener("blur", async () => {
+      if (onBlur) await onBlur(input, Number(input.getAttribute(inputAttr)));
       const cleaned = items.map(x => String(x || "").trim()).filter(Boolean);
       items.splice(0, items.length, ...[...new Set(cleaned)]);
       if (lockedValue === "Other") db.settings.customerTypes = ensureOtherType(items);
       if (lockedValue === "Lead") db.settings.customerStatuses = ensureLeadStatus(items);
+      if (lockedValue === null) db.settings.wipColumns = ensureWipColumns(items);
       renderAll();
       scheduleSettingsSave();
     });
@@ -1646,10 +1830,11 @@ async function importJsonFile(event) {
 
     await importCustomersToFirestore(customers.map(normalizeCustomer));
 
-    if (parsed.settings?.customerTypes || parsed.settings?.customerStatuses) {
+    if (parsed.settings?.customerTypes || parsed.settings?.customerStatuses || parsed.settings?.wipColumns) {
       await setDoc(doc(firestore, "settings", "global"), {
         customerTypes: ensureOtherType(parsed.settings.customerTypes || db.settings.customerTypes),
         customerStatuses: ensureLeadStatus(parsed.settings.customerStatuses || db.settings.customerStatuses),
+        wipColumns: ensureWipColumns(parsed.settings.wipColumns || db.settings.wipColumns),
         updatedAt: serverTimestamp()
       }, { merge: true });
     }
