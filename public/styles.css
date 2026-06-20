@@ -754,3 +754,17 @@ textarea { min-height: 84px; resize: vertical; }
 .topbar {
   z-index: 9200;
 }
+
+.autosave-indicator {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #000;
+  border-radius: 999px;
+  background: #242424;
+  color: var(--atlas-muted);
+  box-shadow: var(--chip-shadow);
+  font-size: 12px;
+  font-weight: 800;
+}

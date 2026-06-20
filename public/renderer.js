@@ -61,6 +61,7 @@ let mapReady = false;
 let mapInitialising = false;
 let settingsSaveTimer = null;
 let editorCleanSnapshot = "";
+let editorAutosaveTimer = null;
 let activeMovePin = null;
 let wipSortableInstances = [];
 
@@ -214,7 +215,6 @@ function bindEvents() {
   });
 
   bindIfExists("newCustomer", "click", newCustomer);
-  bindIfExists("saveCustomer", "click", saveEditorCustomer);
   bindIfExists("fitMap", "click", () => fitMapToMarkers(true));
   bindIfExists("clearFiltersMap", "click", clearFilters);
   bindIfExists("clearFiltersCards", "click", clearFilters);
@@ -925,12 +925,13 @@ async function geocodeEditorAddress(index) {
   });
 }
 
-async function saveEditorCustomer() {
+async function saveEditorCustomer({ silent = false } = {}) {
   const c = readBaseEditorIntoDraft();
 
   if (!c.companyName.trim()) {
-    toast("Company name is required.");
-    return;
+    setEditorAutosaveStatus("Enter a company name to autosave");
+    if (!silent) toast("Company name is required.");
+    return false;
   }
 
   const payload = {
@@ -975,11 +976,14 @@ async function saveEditorCustomer() {
     }
 
     editorCleanSnapshot = editorSnapshot(readBaseEditorIntoDraft());
-    updateSavePulse();
-    toast("Customer saved.");
+    setEditorAutosaveStatus("Saved");
+    if (!silent) toast("Customer saved.");
+    return true;
   } catch (error) {
     console.error("Customer save failed:", error);
+    setEditorAutosaveStatus("Autosave failed");
     toast("Customer save failed. Check console.");
+    return false;
   }
 }
 
@@ -1776,12 +1780,23 @@ function bindEditorDirtyTracking() {
   });
 }
 
-function updateSavePulse() {
-  const button = document.getElementById("saveCustomer");
-  if (!button || !window.editorDraft) return;
-  const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
-  button.classList.toggle("needs-save", dirty);
+function scheduleEditorAutosave() {
+  clearTimeout(editorAutosaveTimer);
+  setEditorAutosaveStatus("Saving...");
+  editorAutosaveTimer = setTimeout(() => saveEditorCustomer({ silent: true }), 350);
 }
+
+function setEditorAutosaveStatus(message) {
+  const el = document.getElementById("editorAutosaveStatus");
+  if (el) el.textContent = message || "Autosaves changes";
+}
+
+function updateSavePulse() {
+  if (!window.editorDraft) return;
+  const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
+  if (dirty) scheduleEditorAutosave();
+}
+
 
 
 function toggleConsole() {
