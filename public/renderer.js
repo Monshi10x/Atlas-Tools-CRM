@@ -519,7 +519,11 @@ function renderAll() {
   renderTypeSelects();
   renderStatusSelects();
   renderCustomerCards();
-  renderCustomerTypes();
+  if (getActiveSettingsScope()) {
+    console.debug("[settings-autosave] skipped settings list render while editing", { scope: getActiveSettingsScope() });
+  } else {
+    renderCustomerTypes();
+  }
   renderWipBoard();
   renderMapMarkers();
   renderStats();
@@ -1459,6 +1463,7 @@ function ensureWipColumns(columns = []) {
 
 function scheduleSettingsSave() {
   clearTimeout(settingsSaveTimer);
+  console.debug("[settings-autosave] scheduled", { scope: getActiveSettingsScope(), wipColumns: [...(db.settings.wipColumns || [])] });
   settingsSaveTimer = setTimeout(saveSettings, 450);
 }
 
@@ -1471,6 +1476,12 @@ async function saveSettings() {
   if (activeSettingsScope !== "types") db.settings.customerTypes = customerTypes;
   if (activeSettingsScope !== "statuses") db.settings.customerStatuses = customerStatuses;
   if (activeSettingsScope !== "wipColumns") db.settings.wipColumns = wipColumns;
+
+  console.debug("[settings-autosave] saving", {
+    activeSettingsScope,
+    localWipColumns: [...(db.settings.wipColumns || [])],
+    payloadWipColumns: wipColumns
+  });
 
   try {
     await setDoc(doc(firestore, "settings", "global"), {
@@ -1713,6 +1724,7 @@ function renderWipColumnsSettings() {
     onInput(index, value) {
       const oldColumn = db.settings.wipColumns[index];
       db.settings.wipColumns[index] = value;
+      console.debug("[settings-autosave] WIP column input", { index, oldColumn, value, wipColumns: [...db.settings.wipColumns] });
       updateCustomersForRenamedWipColumn(oldColumn, value);
       renderWipBoard();
       scheduleSettingsSave();
@@ -1736,14 +1748,21 @@ function initWipColumnSettingsSortable() {
   if (!host || !window.Sortable) return;
 
   new window.Sortable(host, {
-    animation: 120,
+    animation: 0,
     ghostClass: "sortable-ghost",
     direction: "vertical",
     handle: "[data-settings-drag-handle]",
     onEnd: () => {
       db.settings.wipColumns = [...host.querySelectorAll("[data-wip-column-index]")]
         .map(input => input.value);
-      renderAll();
+      host.querySelectorAll("[data-wip-column-index]").forEach((input, index) => {
+        input.setAttribute("data-wip-column-index", String(index));
+      });
+      host.querySelectorAll('[data-action="remove-wip-column"]').forEach((button, index) => {
+        button.setAttribute("data-index", String(index));
+      });
+      console.debug("[settings-autosave] WIP columns reordered", { wipColumns: [...db.settings.wipColumns] });
+      renderWipBoard();
       scheduleSettingsSave();
     }
   });
