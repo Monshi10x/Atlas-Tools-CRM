@@ -875,3 +875,8 @@ textarea { min-height: 84px; resize: vertical; }
     height: calc(100vh - var(--fixed-header-height) - 28px);
   }
 }
+
+.sortable-ghost {
+  opacity: 0.35;
+  transform: scale(0.98);
+}

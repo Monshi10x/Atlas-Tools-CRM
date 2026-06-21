@@ -1559,21 +1559,22 @@ function initWipSortables() {
   }
 
   document.querySelectorAll(".wip-column-list").forEach(list => {
-    wipSortableInstances.push(window.Sortable.create(list, {
-      group: "atlas-wip-board",
-      animation: 240,
-      easing: "cubic-bezier(0.2, 0, 0, 1)",
-      ghostClass: "wip-card-ghost",
-      chosenClass: "wip-card-chosen",
-      dragClass: "wip-card-drag",
-      emptyInsertThreshold: 32,
-      swapThreshold: 0.65,
-      invertSwap: true,
-      invertedSwapThreshold: 0.55,
-      onMove: () => true,
-      onEnd: saveWipBoardOrder
+    wipSortableInstances.push(new window.Sortable(list, {
+      animation: 120,
+      group: "shared",
+      swapThreshold: 1,
+      ghostClass: "sortable-ghost",
+      direction: "vertical",
+      onEnd: function() {
+        saveWipBoardOrder();
+      },
+      onMove: (evt, originalEvent) => handleWipSortMove(evt, originalEvent)
     }));
   });
+}
+
+function handleWipSortMove() {
+  return true;
 }
 
 async function saveWipBoardOrder() {
