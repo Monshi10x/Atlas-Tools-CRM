@@ -323,12 +323,13 @@ function startFirestoreListeners() {
 
   settingsUnsubscribe = onSnapshot(doc(firestore, "settings", "global"), (snap) => {
     const data = snap.exists() ? snap.data() : {};
+    const activeSettingsScope = getActiveSettingsScope();
     db.settings = {
       ...db.settings,
       ...data,
-      customerTypes: ensureOtherType(data.customerTypes || db.settings.customerTypes),
-      customerStatuses: ensureLeadStatus(data.customerStatuses || db.settings.customerStatuses),
-      wipColumns: ensureWipColumns(data.wipColumns || db.settings.wipColumns),
+      customerTypes: ensureOtherType(activeSettingsScope === "types" ? db.settings.customerTypes : data.customerTypes || db.settings.customerTypes),
+      customerStatuses: ensureLeadStatus(activeSettingsScope === "statuses" ? db.settings.customerStatuses : data.customerStatuses || db.settings.customerStatuses),
+      wipColumns: ensureWipColumns(activeSettingsScope === "wipColumns" ? db.settings.wipColumns : data.wipColumns || db.settings.wipColumns),
       googleMapsApiKey: mapsApiKey
     };
     if (!isFocusWithin("editorHost")) renderEditor();
@@ -341,6 +342,16 @@ function startFirestoreListeners() {
     if (!isFocusWithin("editorHost")) renderEditor();
     preserveFocus(renderAll);
   }, (error) => console.error("Customers listener failed:", error));
+}
+
+
+function getActiveSettingsScope() {
+  const active = document.activeElement;
+  if (!active) return "";
+  if (document.getElementById("customerTypesHost")?.contains(active)) return "types";
+  if (document.getElementById("customerStatusesHost")?.contains(active)) return "statuses";
+  if (document.getElementById("wipColumnsHost")?.contains(active)) return "wipColumns";
+  return "";
 }
 
 
@@ -1452,15 +1463,20 @@ function scheduleSettingsSave() {
 }
 
 async function saveSettings() {
-  db.settings.customerTypes = ensureOtherType(db.settings.customerTypes);
-  db.settings.customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
-  db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
+  const activeSettingsScope = getActiveSettingsScope();
+  const customerTypes = ensureOtherType(db.settings.customerTypes);
+  const customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
+  const wipColumns = ensureWipColumns(db.settings.wipColumns);
+
+  if (activeSettingsScope !== "types") db.settings.customerTypes = customerTypes;
+  if (activeSettingsScope !== "statuses") db.settings.customerStatuses = customerStatuses;
+  if (activeSettingsScope !== "wipColumns") db.settings.wipColumns = wipColumns;
 
   try {
     await setDoc(doc(firestore, "settings", "global"), {
-      customerTypes: db.settings.customerTypes,
-      customerStatuses: db.settings.customerStatuses,
-      wipColumns: db.settings.wipColumns,
+      customerTypes,
+      customerStatuses,
+      wipColumns,
       updatedAt: serverTimestamp()
     }, { merge: true });
 
@@ -1662,7 +1678,6 @@ function renderCustomerTypes() {
     removeAction: "remove-type",
     onInput(index, value) {
       db.settings.customerTypes[index] = value;
-      db.settings.customerTypes = ensureOtherType(db.settings.customerTypes);
       renderTypeSelects();
       scheduleSettingsSave();
     }
@@ -1681,7 +1696,6 @@ function renderCustomerStatuses() {
     removeAction: "remove-status",
     onInput(index, value) {
       db.settings.customerStatuses[index] = value;
-      db.settings.customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
       renderStatusSelects();
       scheduleSettingsSave();
     }
@@ -1699,7 +1713,6 @@ function renderWipColumnsSettings() {
     onInput(index, value) {
       const oldColumn = db.settings.wipColumns[index];
       db.settings.wipColumns[index] = value;
-      db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
       updateCustomersForRenamedWipColumn(oldColumn, value);
       renderWipBoard();
       scheduleSettingsSave();
