@@ -890,10 +890,5 @@ textarea { min-height: 84px; resize: vertical; }
 
 .wip-card {
   will-change: transform;
-  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
-}
-
-.sortable-ghost + .wip-card,
-.wip-card:has(+ .sortable-ghost) {
-  transition: transform 120ms ease;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
 }

@@ -64,6 +64,7 @@ let editorCleanSnapshot = "";
 let editorAutosaveTimer = null;
 let activeMovePin = null;
 let wipSortableInstances = [];
+let wipCardRects = new Map();
 
 const defaultCenter = { lat: -27.609, lng: 153.111 };
 
@@ -1565,13 +1566,50 @@ function initWipSortables() {
       swapThreshold: 1,
       ghostClass: "sortable-ghost",
       direction: "vertical",
+      onStart: function() {
+        wipCardRects = captureWipCardRects();
+      },
+      onChange: function() {
+        animateWipCardMoves();
+      },
       onEnd: function() {
+        animateWipCardMoves();
         saveWipBoardOrder();
       },
       onMove: (evt, originalEvent) => handleWipSortMove(evt, originalEvent)
     }));
   });
 }
+
+function captureWipCardRects() {
+  return new Map([...document.querySelectorAll(".wip-card")].map(card => [card.dataset.id, card.getBoundingClientRect()]));
+}
+
+function animateWipCardMoves() {
+  const previousRects = wipCardRects;
+  const nextRects = captureWipCardRects();
+
+  nextRects.forEach((nextRect, id) => {
+    const previousRect = previousRects.get(id);
+    const card = document.querySelector(`.wip-card[data-id="${CSS.escape(id)}"]`);
+    if (!previousRect || !card || card.classList.contains("sortable-ghost")) return;
+
+    const deltaX = previousRect.left - nextRect.left;
+    const deltaY = previousRect.top - nextRect.top;
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+
+    card.style.transition = "none";
+    card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+    requestAnimationFrame(() => {
+      card.style.transition = "transform 180ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms ease, border-color 120ms ease";
+      card.style.transform = "";
+    });
+  });
+
+  wipCardRects = nextRects;
+}
+
 
 function handleWipSortMove() {
   return true;
