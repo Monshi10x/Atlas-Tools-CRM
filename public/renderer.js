@@ -200,6 +200,8 @@ function bindEvents() {
   });
 
   bindIfExists("menuToggle", "click", togglePageMenu);
+  bindIfExists("menuClose", "click", closePageMenu);
+  bindIfExists("menuScrim", "click", closePageMenu);
 
   document.addEventListener("click", handleDocumentClick);
 
@@ -242,13 +244,17 @@ function bindEvents() {
 function togglePageMenu() {
   const nav = document.getElementById("tabsNav");
   const button = document.getElementById("menuToggle");
+  const scrim = document.getElementById("menuScrim");
   const isOpen = nav?.classList.toggle("open");
   button?.setAttribute("aria-expanded", String(Boolean(isOpen)));
+  if (scrim) scrim.hidden = !isOpen;
 }
 
 function closePageMenu() {
   document.getElementById("tabsNav")?.classList.remove("open");
   document.getElementById("menuToggle")?.setAttribute("aria-expanded", "false");
+  const scrim = document.getElementById("menuScrim");
+  if (scrim) scrim.hidden = true;
 }
 
 function handleDocumentClick(event) {
@@ -570,6 +576,7 @@ function newCustomer() {
 }
 
 function editCustomer(id) {
+  closeModal();
   selectedCustomerId = id;
   renderEditor();
   switchTab("editorTab");
@@ -1338,7 +1345,20 @@ function focusCustomerOnMap(id) {
     if (!map) return;
     map.setCenter({ lat: Number(first.lat), lng: Number(first.lng) });
     map.setZoom(15);
+    const marker = markers.find(m => m.customerId === id && m.addressId === first.id) || markers.find(m => m.customerId === id);
+    pulseMarkerOnce(marker);
   }, 120);
+}
+
+function pulseMarkerOnce(marker) {
+  if (!marker) return;
+  const baseIcon = marker.baseIcon || marker.getIcon();
+  marker.setIcon({
+    ...baseIcon,
+    scale: 13,
+    fillColor: "#dca101"
+  });
+  setTimeout(() => marker.setIcon(baseIcon), 650);
 }
 
 function fitMapToMarkers(showToast = true) {
