@@ -1826,12 +1826,21 @@ function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, remo
   host.querySelectorAll(`[${inputAttr}]`).forEach(input => {
     input.addEventListener("input", () => onInput(Number(input.getAttribute(inputAttr)), input.value));
     input.addEventListener("blur", async () => {
-      if (onBlur) await onBlur(input, Number(input.getAttribute(inputAttr)));
-      const cleaned = items.map(x => String(x || "").trim()).filter(Boolean);
-      items.splice(0, items.length, ...[...new Set(cleaned)]);
-      if (lockedValue === "Other") db.settings.customerTypes = ensureOtherType(items);
-      if (lockedValue === "Lead") db.settings.customerStatuses = ensureLeadStatus(items);
-      if (lockedValue === null) db.settings.wipColumns = ensureWipColumns(items);
+      const index = Number(input.getAttribute(inputAttr));
+
+      if (lockedValue === null) {
+        db.settings.wipColumns = [...host.querySelectorAll(`[${inputAttr}]`)].map(el => el.value);
+        console.debug("[settings-autosave] WIP blur captured DOM values", { index, wipColumns: [...db.settings.wipColumns] });
+      }
+
+      if (onBlur) await onBlur(input, index);
+
+      const sourceItems = lockedValue === null ? db.settings.wipColumns : items;
+      const cleaned = sourceItems.map(x => String(x || "").trim()).filter(Boolean);
+      sourceItems.splice(0, sourceItems.length, ...[...new Set(cleaned)]);
+      if (lockedValue === "Other") db.settings.customerTypes = ensureOtherType(sourceItems);
+      if (lockedValue === "Lead") db.settings.customerStatuses = ensureLeadStatus(sourceItems);
+      if (lockedValue === null) db.settings.wipColumns = ensureWipColumns(sourceItems);
       renderAll();
       scheduleSettingsSave();
     });
