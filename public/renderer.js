@@ -1586,20 +1586,31 @@ function initWipSortables() {
     return;
   }
 
-  document.querySelectorAll(".wip-column-list").forEach(list => {
+  const lists = document.querySelectorAll(".wip-column-list");
+  console.debug("[wip-sortable] initializing", { lists: lists.length, sortableLoaded: Boolean(window.Sortable) });
+
+  lists.forEach(list => {
     wipSortableInstances.push(new window.Sortable(list, {
+      draggable: ".wip-card",
+      disabled: false,
       animation: 120,
       group: "shared",
       swapThreshold: 1,
       ghostClass: "sortable-ghost",
+      chosenClass: "wip-card-chosen",
+      dragClass: "wip-card-drag",
       direction: "vertical",
+      forceFallback: true,
+      fallbackOnBody: true,
+      fallbackTolerance: 3,
       onStart: function() {
         wipCardRects = captureWipCardRects();
       },
       onChange: function() {
         animateWipCardMoves();
       },
-      onEnd: function() {
+      onEnd: function(event) {
+        console.debug("[wip-sortable] drag ended", { from: event.from?.dataset?.wipColumn, to: event.to?.dataset?.wipColumn, oldIndex: event.oldIndex, newIndex: event.newIndex });
         animateWipCardMoves();
         saveWipBoardOrder();
       },
