@@ -1515,21 +1515,24 @@ function renderWipBoard() {
   const columns = ensureWipColumns(db.settings.wipColumns);
   db.settings.wipColumns = columns;
 
-  host.innerHTML = columns.map(column => {
+  host.innerHTML = columns.map((column, columnIndex) => {
     const customers = getCustomersForWipColumn(column);
     return `
-      <section class="wip-column">
+      <section class="wip-column wip-column-theme-${columnIndex % 5}">
         <div class="wip-column-header">
           <h3>${esc(column)}</h3>
           <span class="badge">${customers.length}</span>
         </div>
         <div class="wip-column-list" data-wip-column="${esc(column)}">
-          ${customers.map(c => `
+          ${customers.map((c, cardIndex) => `
             <article class="wip-card" data-id="${esc(c.id)}" data-action="open-customer">
               <span class="wip-drag-handle" aria-hidden="true">⋮⋮</span>
-              <strong>${esc(c.companyName || "Unnamed Company")}</strong>
+              <span class="wip-card-number">${cardIndex + 1}</span>
+              <span class="wip-card-body">
+                <strong>${esc(c.companyName || "Unnamed Company")}</strong>
+              </span>
             </article>
-          `).join("")}
+          `).join("") || `<div class="wip-empty-column">Drop customers here</div>`}
         </div>
       </section>
     `;
@@ -1561,11 +1564,25 @@ function initWipSortables() {
   document.querySelectorAll(".wip-column-list").forEach(list => {
     wipSortableInstances.push(window.Sortable.create(list, {
       group: "atlas-wip-board",
-      animation: 150,
+      animation: 180,
+      easing: "cubic-bezier(0.2, 0, 0, 1)",
+      forceFallback: true,
+      fallbackOnBody: true,
+      fallbackClass: "wip-card-fallback",
       ghostClass: "wip-card-ghost",
       chosenClass: "wip-card-chosen",
       dragClass: "wip-card-drag",
-      onEnd: saveWipBoardOrder
+      emptyInsertThreshold: 24,
+      scroll: true,
+      scrollSensitivity: 80,
+      scrollSpeed: 12,
+      swapThreshold: 0.62,
+      onStart: () => document.getElementById("wipBoard")?.classList.add("is-sorting"),
+      onEnd: async () => {
+        document.getElementById("wipBoard")?.classList.remove("is-sorting");
+        document.querySelectorAll(".wip-empty-column").forEach(el => el.remove());
+        await saveWipBoardOrder();
+      }
     }));
   });
 }
