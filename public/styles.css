@@ -880,3 +880,20 @@ textarea { min-height: 84px; resize: vertical; }
   opacity: 0.35;
   transform: scale(0.98);
 }
+
+/* Sortable move animation support: use a vertical flex stack so Sortable can animate sibling transforms smoothly. */
+.wip-column-list {
+  display: flex;
+  flex-direction: column;
+  align-content: stretch;
+}
+
+.wip-card {
+  will-change: transform;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.sortable-ghost + .wip-card,
+.wip-card:has(+ .sortable-ghost) {
+  transition: transform 120ms ease;
+}
