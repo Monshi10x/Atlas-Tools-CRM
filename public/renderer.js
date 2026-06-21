@@ -330,16 +330,67 @@ function startFirestoreListeners() {
       wipColumns: ensureWipColumns(data.wipColumns || db.settings.wipColumns),
       googleMapsApiKey: mapsApiKey
     };
-    renderEditor();
-    renderAll();
+    if (!isFocusWithin("editorHost")) renderEditor();
+    preserveFocus(renderAll);
   }, (error) => console.error("Settings listener failed:", error));
 
   customersUnsubscribe = onSnapshot(query(collection(firestore, "customers"), orderBy("companyName")), (snap) => {
     db.customers = snap.docs.map(d => normalizeCustomer({ id: d.id, ...d.data() }));
     db.updatedAt = new Date().toISOString();
-    renderEditor();
-    renderAll();
+    if (!isFocusWithin("editorHost")) renderEditor();
+    preserveFocus(renderAll);
   }, (error) => console.error("Customers listener failed:", error));
+}
+
+
+function isFocusWithin(id) {
+  const host = document.getElementById(id);
+  return Boolean(host && document.activeElement && host.contains(document.activeElement));
+}
+
+function getFocusSelector(el) {
+  if (!el || el === document.body) return "";
+  if (el.id) return `#${CSS.escape(el.id)}`;
+
+  const contactIndex = el.getAttribute("data-contact-index");
+  const contactField = el.getAttribute("data-contact-field");
+  if (contactIndex !== null && contactField) {
+    return `[data-contact-index="${CSS.escape(contactIndex)}"][data-contact-field="${CSS.escape(contactField)}"]`;
+  }
+
+  const addressIndex = el.getAttribute("data-address-index");
+  const addressField = el.getAttribute("data-address-field");
+  if (addressIndex !== null && addressField) {
+    return `[data-address-index="${CSS.escape(addressIndex)}"][data-address-field="${CSS.escape(addressField)}"]`;
+  }
+
+  for (const attr of ["data-type-index", "data-status-index", "data-wip-column-index"]) {
+    const value = el.getAttribute(attr);
+    if (value !== null) return `[${attr}="${CSS.escape(value)}"]`;
+  }
+
+  return "";
+}
+
+function preserveFocus(callback) {
+  const active = document.activeElement;
+  const selector = getFocusSelector(active);
+  const start = typeof active?.selectionStart === "number" ? active.selectionStart : null;
+  const end = typeof active?.selectionEnd === "number" ? active.selectionEnd : null;
+
+  callback();
+
+  if (!selector) return;
+
+  requestAnimationFrame(() => {
+    const next = document.querySelector(selector);
+    if (!next || document.activeElement === next) return;
+    next.focus({ preventScroll: true });
+    if (start !== null && typeof next.setSelectionRange === "function") {
+      const max = String(next.value || "").length;
+      next.setSelectionRange(Math.min(start, max), Math.min(end ?? start, max));
+    }
+  });
 }
 
 function normalizeCustomer(c = {}) {
