@@ -892,3 +892,22 @@ textarea { min-height: 84px; resize: vertical; }
   will-change: transform;
   transition: box-shadow 120ms ease, border-color 120ms ease;
 }
+
+.sortable-settings-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.settings-drag-handle {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 100%;
+  min-height: 36px;
+  color: var(--atlas-yellow);
+  cursor: grab;
+  font-weight: 900;
+}
+
+.settings-drag-handle:active {
+  cursor: grabbing;
+}

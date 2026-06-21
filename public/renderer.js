@@ -1530,7 +1530,7 @@ function renderWipBoard() {
 
   destroyWipSortables();
   const columns = ensureWipColumns(db.settings.wipColumns);
-  db.settings.wipColumns = columns;
+  if (getActiveSettingsScope() !== "wipColumns") db.settings.wipColumns = columns;
 
   host.innerHTML = columns.map(column => {
     const customers = getCustomersForWipColumn(column);
@@ -1725,6 +1725,26 @@ function renderWipColumnsSettings() {
         await reassignCustomers("wipColumn", oldColumn, newColumn);
         input.dataset.originalValue = newColumn;
       }
+    },
+    sortable: true
+  });
+  initWipColumnSettingsSortable();
+}
+
+function initWipColumnSettingsSortable() {
+  const host = document.getElementById("wipColumnsHost");
+  if (!host || !window.Sortable) return;
+
+  new window.Sortable(host, {
+    animation: 120,
+    ghostClass: "sortable-ghost",
+    direction: "vertical",
+    handle: "[data-settings-drag-handle]",
+    onEnd: () => {
+      db.settings.wipColumns = [...host.querySelectorAll("[data-wip-column-index]")]
+        .map(input => input.value);
+      renderAll();
+      scheduleSettingsSave();
     }
   });
 }
@@ -1766,14 +1786,15 @@ function updateCustomersForRenamedWipColumn(oldColumn, newColumn) {
   });
 }
 
-function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, removeAction, onInput, onBlur }) {
+function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, removeAction, onInput, onBlur, sortable = false }) {
   const host = document.getElementById(hostId);
   if (!host) return;
 
   host.innerHTML = items.map((item, i) => {
     const locked = item === lockedValue;
     return `
-      <div class="settings-list-row ${locked ? "locked" : ""}">
+      <div class="settings-list-row ${locked ? "locked" : ""} ${sortable ? "sortable-settings-row" : ""}">
+        ${sortable ? `<span class="settings-drag-handle" data-settings-drag-handle aria-hidden="true">↕</span>` : ""}
         <div>
           <label>${esc(label)}</label>
           <input value="${esc(item)}" ${inputAttr}="${i}" data-original-value="${esc(item)}" ${locked ? "readonly" : ""} />
