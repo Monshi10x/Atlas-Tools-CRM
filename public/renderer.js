@@ -340,6 +340,11 @@ function startFirestoreListeners() {
     db.customers = snap.docs
       .map(d => normalizeCustomer({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.companyName || "").localeCompare(b.companyName || ""));
+    console.debug("[wip-debug] customers snapshot", {
+      firestoreDocs: snap.docs.length,
+      normalizedCustomers: db.customers.length,
+      emptyCompanyName: db.customers.filter(c => !c.companyName).length
+    });
     db.updatedAt = new Date().toISOString();
     if (!isFocusWithin("editorHost")) renderEditor();
     preserveFocus(renderAll);
@@ -1546,6 +1551,7 @@ function renderWipBoard() {
   if (getActiveSettingsScope() !== "wipColumns") db.settings.wipColumns = columns;
 
   const buckets = getWipBoardBuckets(columns);
+  debugWipBoard(columns, buckets);
 
   host.innerHTML = columns.map(column => {
     const customers = getCustomersForWipColumn(column, buckets);
@@ -1569,6 +1575,58 @@ function renderWipBoard() {
 
   initWipSortables();
 }
+
+function getWipResolutionDetails(customer, columns = ensureWipColumns(db.settings.wipColumns)) {
+  const rawColumn = String(customer.wipColumn || "").trim();
+  const exactColumn = columns.find(column => column === rawColumn);
+  const caseInsensitiveColumn = columns.find(column => column.toLowerCase().trim() === rawColumn.toLowerCase());
+  const fallbackColumn = getDefaultWipColumn(columns);
+  const resolvedColumn = exactColumn || caseInsensitiveColumn || fallbackColumn;
+
+  return {
+    rawColumn,
+    resolvedColumn,
+    matchedBy: exactColumn ? "exact" : caseInsensitiveColumn ? "case-insensitive" : "fallback",
+    fallbackColumn
+  };
+}
+
+function debugWipBoard(columns, buckets) {
+  const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
+  const visibleIds = new Set([...buckets.values()].flat().map(customer => customer.id));
+  const rows = db.customers.map(customer => {
+    const details = getWipResolutionDetails(customer, columns);
+    const searchMatches = !search || String(customer.companyName || "").toLowerCase().includes(search);
+
+    return {
+      id: customer.id,
+      companyName: customer.companyName || "(blank)",
+      rawWipColumn: customer.wipColumn || "(blank)",
+      resolvedColumn: details.resolvedColumn,
+      matchedBy: details.matchedBy,
+      searchMatches,
+      visibleOnBoard: visibleIds.has(customer.id),
+      wipOrder: customer.wipOrder
+    };
+  });
+  const missingRows = rows.filter(row => row.searchMatches && !row.visibleOnBoard);
+
+  console.debug("[wip-debug] board render", {
+    columns,
+    search,
+    loadedCustomers: db.customers.length,
+    visibleCards: visibleIds.size,
+    missingDespiteSearchMatch: missingRows.length,
+    bucketCounts: Object.fromEntries([...buckets.entries()].map(([column, customers]) => [column, customers.length]))
+  });
+
+  if (missingRows.length) {
+    console.warn("[wip-debug] customers missing from WIP board", missingRows);
+  }
+
+  console.table(rows);
+}
+
 
 function getDefaultWipColumn(columns = ensureWipColumns(db.settings.wipColumns)) {
   return columns.find(c => c.toLowerCase().trim() === "un-assigned") ||
