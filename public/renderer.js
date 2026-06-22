@@ -412,10 +412,30 @@ function preserveFocus(callback) {
   });
 }
 
+function firstNonEmpty(...values) {
+  return values.map(value => String(value || "").trim()).find(Boolean) || "";
+}
+
+function getCustomerDisplayName(customer = {}) {
+  return firstNonEmpty(
+    customer.companyName,
+    customer.company,
+    customer.company_name,
+    customer["Company Name"],
+    customer["company name"],
+    customer.businessName,
+    customer.customerName,
+    customer.tradingName,
+    customer.name
+  );
+}
+
 function normalizeCustomer(c = {}) {
+  const companyName = getCustomerDisplayName(c);
+
   return {
     id: c.id || uid(),
-    companyName: c.companyName || "",
+    companyName,
     customerType: c.customerType || db?.settings?.customerTypes?.[0] || "Other",
     status: c.status || db?.settings?.customerStatuses?.[0] || "Lead",
     wipColumn: c.wipColumn || db?.settings?.wipColumns?.[0] || "un-allocated",
@@ -1597,16 +1617,32 @@ function getWipResolutionDetails(customer, columns = ensureWipColumns(db.setting
   };
 }
 
+function getWipCustomerHaystack(customer = {}) {
+  return [
+    customer.id,
+    getCustomerDisplayName(customer),
+    customer.customerType,
+    customer.status,
+    customer.phone,
+    customer.email,
+    customer.notes,
+    customer.lastContacted,
+    ...(customer.contacts || []).flatMap(contact => [contact.firstName, contact.lastName, contact.name, contact.role, contact.phone, contact.email]),
+    ...(customer.addresses || []).flatMap(address => [address.label, address.street, address.suburb, address.state, address.postcode, address.country])
+  ].join(" ").toLowerCase();
+}
+
 function debugWipBoard(columns, buckets) {
   const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
   const visibleIds = new Set([...buckets.values()].flat().map(customer => customer.id));
   const rows = db.customers.map(customer => {
     const details = getWipResolutionDetails(customer, columns);
-    const searchMatches = !search || String(customer.companyName || "").toLowerCase().includes(search);
+    const haystack = getWipCustomerHaystack(customer);
+    const searchMatches = !search || haystack.includes(search);
 
     return {
       id: customer.id,
-      companyName: customer.companyName || "(blank)",
+      companyName: getCustomerDisplayName(customer) || "(blank)",
       rawWipColumn: customer.wipColumn || "(blank)",
       resolvedColumn: details.resolvedColumn,
       matchedBy: details.matchedBy,
@@ -1655,7 +1691,7 @@ function getWipBoardBuckets(columns) {
   const buckets = new Map(columns.map(column => [column, []]));
 
   db.customers.forEach(customer => {
-    if (search && !String(customer.companyName || "").toLowerCase().includes(search)) return;
+    if (search && !getWipCustomerHaystack(customer).includes(search)) return;
 
     const column = getCustomerWipColumn(customer, columns);
     if (!buckets.has(column)) buckets.set(column, []);
