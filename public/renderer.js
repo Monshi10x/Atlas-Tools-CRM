@@ -1024,7 +1024,7 @@ async function saveEditorCustomer({ silent = false } = {}) {
       email: x.email || "",
       role: x.role || ""
     })),
-    wipColumn: c.wipColumn || db.settings.wipColumns[0] || "un-allocated",
+    wipColumn: getCustomerWipColumn(c),
     wipOrder: Number.isFinite(Number(c.wipOrder)) ? Number(c.wipOrder) : 0,
     addresses: c.addresses.map(a => ({
       id: a.id || uid(),
@@ -1566,11 +1566,23 @@ function renderWipBoard() {
   initWipSortables();
 }
 
+function getDefaultWipColumn() {
+  const columns = ensureWipColumns(db.settings.wipColumns);
+  return columns.find(c => c.toLowerCase() === "un-assigned") ||
+    columns.find(c => c.toLowerCase() === "un-allocated") ||
+    columns[0];
+}
+
+function getCustomerWipColumn(customer) {
+  const columns = ensureWipColumns(db.settings.wipColumns);
+  return columns.includes(customer.wipColumn) ? customer.wipColumn : getDefaultWipColumn();
+}
+
 function getCustomersForWipColumn(column) {
   const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
 
   return db.customers
-    .filter(c => (c.wipColumn || db.settings.wipColumns[0]) === column)
+    .filter(c => getCustomerWipColumn(c) === column)
     .filter(c => !search || String(c.companyName || "").toLowerCase().includes(search))
     .sort((a, b) => (Number(a.wipOrder) || 0) - (Number(b.wipOrder) || 0) || (a.companyName || "").localeCompare(b.companyName || ""));
 }
