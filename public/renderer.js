@@ -71,6 +71,29 @@ let wipCardRects = new Map();
 
 const defaultCenter = { lat: -27.609, lng: 153.111 };
 
+const neutralDarkMapStyles = [
+  { elementType: "geometry", stylers: [{ color: "#1f1f1f" }] },
+  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#b7b7b7" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1f1f1f" }] },
+  { featureType: "administrative", elementType: "geometry", stylers: [{ color: "#4a4a4a" }] },
+  { featureType: "administrative.country", elementType: "labels.text.fill", stylers: [{ color: "#d0d0d0" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#d0d0d0" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#262626" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#9f9f9f" }] },
+  { featureType: "poi.business", stylers: [{ visibility: "simplified" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#383838" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#222222" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#c7c7c7" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#444444" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#555555" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#2f2f2f" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2c2c2c" }] },
+  { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#a8a8a8" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#101820" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#7f8b94" }] }
+];
+
 document.addEventListener("DOMContentLoaded", init);
 
 function init() {
@@ -1227,7 +1250,9 @@ async function initMap() {
       zoom: 9,
       mapTypeControl: true,
       streetViewControl: false,
-      fullscreenControl: true
+      fullscreenControl: true,
+      backgroundColor: "#101010",
+      styles: neutralDarkMapStyles
     });
 
     geocoder = new google.maps.Geocoder();
