@@ -2177,6 +2177,24 @@ function updateSavePulse() {
   if (dirty) scheduleEditorAutosave();
 }
 
+function scheduleEditorAutosave() {
+  clearTimeout(editorAutosaveTimer);
+  setEditorAutosaveStatus("Saving...");
+  editorAutosaveTimer = setTimeout(() => saveEditorCustomer({ silent: true }), 350);
+}
+
+function setEditorAutosaveStatus(message) {
+  const el = document.getElementById("editorAutosaveStatus");
+  if (el) el.textContent = message || "Autosaves changes";
+}
+
+function updateSavePulse() {
+  if (!window.editorDraft) return;
+  const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
+  if (dirty) scheduleEditorAutosave();
+}
+
+
 
 
 function toggleConsole() {
