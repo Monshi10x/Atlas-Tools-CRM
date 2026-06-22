@@ -232,6 +232,12 @@ function bindEvents() {
       searchPlacesOnMap();
     }
   });
+  debugPlaces("controls bound", {
+    hasSearchButton: Boolean(document.getElementById("searchPlacesButton")),
+    hasClearButton: Boolean(document.getElementById("clearPlacesButton")),
+    hasQueryInput: Boolean(document.getElementById("placeSearchQuery")),
+    hasStatus: Boolean(document.getElementById("placeSearchStatus"))
+  });
 
   bindIfExists("importCsvButton", "click", () => document.getElementById("csvFileInput")?.click());
   bindIfExists("exportCsvButton", "click", exportCsv);
@@ -1328,11 +1334,40 @@ function enablePinMove(customerId, addressId) {
   toast("Move mode enabled. Drag the pulsing pin to save its new location.");
 }
 
+function debugPlaces(message, details = {}) {
+  console.warn(`[places-debug] ${message}`, details);
+}
+
+function looksLikePlaceResult(value) {
+  return Boolean(value && typeof value === "object" && (value.location || value.displayName || value.formattedAddress || value.id || value.placeId));
+}
+
+function extractPlacesFromSearchResponse(response) {
+  if (Array.isArray(response?.places)) return response.places;
+  if (Array.isArray(response)) return response;
+
+  return Object.values(response || {})
+    .flatMap(value => Array.isArray(value) ? value : [value])
+    .filter(looksLikePlaceResult);
+}
+
 async function ensurePlacesLibrary() {
-  if (placesLibrary) return placesLibrary;
+  if (placesLibrary) {
+    debugPlaces("using cached Places library", { hasPlace: Boolean(placesLibrary.Place), hasSearchByText: typeof placesLibrary.Place?.searchByText === "function" });
+    return placesLibrary;
+  }
+
+  debugPlaces("loading Places library", {
+    hasGoogle: Boolean(window.google),
+    hasMaps: Boolean(window.google?.maps),
+    hasImportLibrary: typeof window.google?.maps?.importLibrary === "function",
+    hasPlacesNamespace: Boolean(window.google?.maps?.places),
+    hasPlaceClass: Boolean(window.google?.maps?.places?.Place)
+  });
 
   if (window.google?.maps?.places?.Place) {
     placesLibrary = { Place: window.google.maps.places.Place };
+    debugPlaces("using existing google.maps.places.Place", { hasSearchByText: typeof placesLibrary.Place?.searchByText === "function" });
     return placesLibrary;
   }
 
@@ -1341,6 +1376,11 @@ async function ensurePlacesLibrary() {
   }
 
   placesLibrary = await google.maps.importLibrary("places");
+  debugPlaces("importLibrary('places') resolved", {
+    keys: Object.keys(placesLibrary || {}),
+    hasPlace: Boolean(placesLibrary?.Place),
+    hasSearchByText: typeof placesLibrary?.Place?.searchByText === "function"
+  });
   return placesLibrary;
 }
 
@@ -1437,7 +1477,12 @@ async function searchPlacesOnMap() {
 
   try {
     setPlaceSearchStatus(`Searching Places API (New) for "${query}"...`, "info");
+    debugPlaces("search started", { query, primaryType, radiusKm, mapReady, hasMap: Boolean(map), mapCenter: getLatLngLiteral(map.getCenter()) });
     const { Place } = await ensurePlacesLibrary();
+    if (typeof Place?.searchByText !== "function") {
+      throw new Error("Places API (New) searchByText is unavailable. Enable Places API (New) for this key and confirm Maps JavaScript v=weekly loaded the places library.");
+    }
+
     const center = map.getCenter();
     const fields = [
       "id",
@@ -1460,13 +1505,27 @@ async function searchPlacesOnMap() {
       region: "au"
     };
 
-    console.warn("[places-search] searchByText request", { ...request, radiusKm });
+    debugPlaces("searchByText request", { ...request, radiusKm, locationBias: getLatLngLiteral(center) });
     const response = await Place.searchByText(request);
-    const places = response?.places || [];
+    const places = extractPlacesFromSearchResponse(response);
+    debugPlaces("searchByText response", {
+      responseKeys: Object.keys(response || {}),
+      placesPropertyCount: Array.isArray(response?.places) ? response.places.length : null,
+      extractedPlaces: places.length
+    });
+    console.table(places.map(place => ({
+      id: place.id || place.placeId || "",
+      name: getPlaceDisplayName(place),
+      address: getPlaceField(place, "formattedAddress"),
+      lat: getLatLngLiteral(place.location)?.lat ?? "",
+      lng: getLatLngLiteral(place.location)?.lng ?? "",
+      primaryType: place.primaryType || ""
+    })));
     renderPlaceMarkers(places);
     setPlaceSearchStatus(`Showing ${places.length} Google Places result${places.length === 1 ? "" : "s"}.`, places.length ? "success" : "warning");
     if (!places.length) toast("No Google Places results found for this map area.");
   } catch (error) {
+    debugPlaces("search failed", { name: error?.name, message: error?.message, stack: error?.stack });
     console.error("Places API (New) search failed:", error);
     setPlaceSearchStatus("Places search failed. Check API enablement, billing and key restrictions.", "error");
     toast("Places search failed. Check the console for details.");
@@ -1475,11 +1534,18 @@ async function searchPlacesOnMap() {
 
 function renderPlaceMarkers(places = []) {
   clearPlaceMarkers();
-  if (!map || !window.google?.maps) return;
+  if (!map || !window.google?.maps) {
+    debugPlaces("render skipped", { hasMap: Boolean(map), hasGoogleMaps: Boolean(window.google?.maps) });
+    return;
+  }
 
+  debugPlaces("rendering place markers", { requestedPlaces: places.length });
   places.forEach((place, index) => {
     const location = getLatLngLiteral(place.location);
-    if (!location) return;
+    if (!location) {
+      debugPlaces("place skipped without location", { index, name: getPlaceDisplayName(place), id: place.id || place.placeId || "" });
+      return;
+    }
 
     const placeKey = getPlaceKey(place, index);
     placesByKey.set(placeKey, place);
@@ -1501,6 +1567,8 @@ function renderPlaceMarkers(places = []) {
     marker.addListener("click", () => openPlaceInfoWindow(placeKey, marker));
     placeMarkers.push(marker);
   });
+
+  debugPlaces("place markers rendered", { markerCount: placeMarkers.length, cachedPlaces: placesByKey.size });
 
   if (placeMarkers.length) {
     const bounds = new google.maps.LatLngBounds();
