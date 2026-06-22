@@ -336,8 +336,10 @@ function startFirestoreListeners() {
     preserveFocus(renderAll);
   }, (error) => console.error("Settings listener failed:", error));
 
-  customersUnsubscribe = onSnapshot(query(collection(firestore, "customers"), orderBy("companyName")), (snap) => {
-    db.customers = snap.docs.map(d => normalizeCustomer({ id: d.id, ...d.data() }));
+  customersUnsubscribe = onSnapshot(collection(firestore, "customers"), (snap) => {
+    db.customers = snap.docs
+      .map(d => normalizeCustomer({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.companyName || "").localeCompare(b.companyName || ""));
     db.updatedAt = new Date().toISOString();
     if (!isFocusWithin("editorHost")) renderEditor();
     preserveFocus(renderAll);
@@ -1543,8 +1545,10 @@ function renderWipBoard() {
   const columns = ensureWipColumns(db.settings.wipColumns);
   if (getActiveSettingsScope() !== "wipColumns") db.settings.wipColumns = columns;
 
+  const buckets = getWipBoardBuckets(columns);
+
   host.innerHTML = columns.map(column => {
-    const customers = getCustomersForWipColumn(column);
+    const customers = getCustomersForWipColumn(column, buckets);
     return `
       <section class="wip-column">
         <div class="wip-column-header">
@@ -1566,25 +1570,42 @@ function renderWipBoard() {
   initWipSortables();
 }
 
-function getDefaultWipColumn() {
-  const columns = ensureWipColumns(db.settings.wipColumns);
-  return columns.find(c => c.toLowerCase() === "un-assigned") ||
-    columns.find(c => c.toLowerCase() === "un-allocated") ||
+function getDefaultWipColumn(columns = ensureWipColumns(db.settings.wipColumns)) {
+  return columns.find(c => c.toLowerCase().trim() === "un-assigned") ||
+    columns.find(c => c.toLowerCase().trim() === "un-allocated") ||
     columns[0];
 }
 
-function getCustomerWipColumn(customer) {
-  const columns = ensureWipColumns(db.settings.wipColumns);
-  return columns.includes(customer.wipColumn) ? customer.wipColumn : getDefaultWipColumn();
+function getCustomerWipColumn(customer, columns = ensureWipColumns(db.settings.wipColumns)) {
+  const rawColumn = String(customer.wipColumn || "").trim();
+  const exactColumn = columns.find(column => column === rawColumn);
+  if (exactColumn) return exactColumn;
+
+  const caseInsensitiveColumn = columns.find(column => column.toLowerCase().trim() === rawColumn.toLowerCase());
+  return caseInsensitiveColumn || getDefaultWipColumn(columns);
 }
 
-function getCustomersForWipColumn(column) {
+function getWipBoardBuckets(columns) {
   const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
+  const buckets = new Map(columns.map(column => [column, []]));
 
-  return db.customers
-    .filter(c => getCustomerWipColumn(c) === column)
-    .filter(c => !search || String(c.companyName || "").toLowerCase().includes(search))
-    .sort((a, b) => (Number(a.wipOrder) || 0) - (Number(b.wipOrder) || 0) || (a.companyName || "").localeCompare(b.companyName || ""));
+  db.customers.forEach(customer => {
+    if (search && !String(customer.companyName || "").toLowerCase().includes(search)) return;
+
+    const column = getCustomerWipColumn(customer, columns);
+    if (!buckets.has(column)) buckets.set(column, []);
+    buckets.get(column).push(customer);
+  });
+
+  buckets.forEach(customers => {
+    customers.sort((a, b) => (Number(a.wipOrder) || 0) - (Number(b.wipOrder) || 0) || (a.companyName || "").localeCompare(b.companyName || ""));
+  });
+
+  return buckets;
+}
+
+function getCustomersForWipColumn(column, buckets = getWipBoardBuckets(ensureWipColumns(db.settings.wipColumns))) {
+  return buckets.get(column) || [];
 }
 
 function destroyWipSortables() {
