@@ -39,6 +39,8 @@ let db = {
       "Builder",
       "Other"
     ],
+    customerStatuses: ["Lead", "Active", "Inactive", "Do Not Contact"],
+    wipColumns: ["un-allocated", "samples sent", "lead to be contacted"],
     googleMapsApiKey: mapsApiKey
   },
   customers: []
@@ -52,13 +54,45 @@ let map = null;
 let geocoder = null;
 let infoWindow = null;
 let markers = [];
+let placeMarkers = [];
+let placesByKey = new Map();
+let placesLibrary = null;
 let appConsoleEntries = [];
 let autocompleteInstances = [];
 let mapScriptLoading = false;
 let mapReady = false;
 let mapInitialising = false;
+let settingsSaveTimer = null;
+let editorCleanSnapshot = "";
+let editorAutosaveTimer = null;
+let activeMovePin = null;
+let wipSortableInstances = [];
+let wipCardRects = new Map();
 
 const defaultCenter = { lat: -27.609, lng: 153.111 };
+
+const neutralDarkMapStyles = [
+  { elementType: "geometry", stylers: [{ color: "#1f1f1f" }] },
+  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#b7b7b7" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1f1f1f" }] },
+  { featureType: "administrative", elementType: "geometry", stylers: [{ color: "#4a4a4a" }] },
+  { featureType: "administrative.country", elementType: "labels.text.fill", stylers: [{ color: "#d0d0d0" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#d0d0d0" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#262626" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#9f9f9f" }] },
+  { featureType: "poi.business", stylers: [{ visibility: "simplified" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#383838" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#222222" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#c7c7c7" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#444444" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#555555" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#2f2f2f" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2c2c2c" }] },
+  { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#a8a8a8" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#101820" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#7f8b94" }] }
+];
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -86,7 +120,6 @@ function init() {
     startFirestoreListeners();
     loadGoogleMaps();
 
-    console.info("Atlas Tools CRM Firebase v1.4.0 loaded.");
   });
 }
 
@@ -186,13 +219,20 @@ function bindEvents() {
   bindIfExists("logoutButton", "click", () => signOut(auth));
 
   document.querySelectorAll(".tab-button").forEach(btn => {
-    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    btn.addEventListener("click", () => {
+      switchTab(btn.dataset.tab);
+      closePageMenu();
+    });
   });
+
+  bindIfExists("menuToggle", "click", togglePageMenu);
+  bindIfExists("menuClose", "click", closePageMenu);
+  bindIfExists("menuScrim", "click", closePageMenu);
 
   document.addEventListener("click", handleDocumentClick);
 
   ["mapSearch", "mapTypeFilter", "mapStateFilter", "mapSuburbFilter", "mapStatusFilter",
-   "customerSearch", "customerTypeFilter", "customerStatusFilter"].forEach(id => {
+   "customerSearch", "customerTypeFilter", "customerStatusFilter", "wipSearch"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) {
       console.warn(`Filter element #${id} was not found.`);
@@ -203,10 +243,17 @@ function bindEvents() {
   });
 
   bindIfExists("newCustomer", "click", newCustomer);
-  bindIfExists("saveCustomer", "click", saveEditorCustomer);
   bindIfExists("fitMap", "click", () => fitMapToMarkers(true));
   bindIfExists("clearFiltersMap", "click", clearFilters);
   bindIfExists("clearFiltersCards", "click", clearFilters);
+  bindIfExists("searchPlacesButton", "click", searchPlacesOnMap);
+  bindIfExists("clearPlacesButton", "click", clearPlaceMarkers);
+  bindIfExists("placeSearchQuery", "keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchPlacesOnMap();
+    }
+  });
 
   bindIfExists("importCsvButton", "click", () => document.getElementById("csvFileInput")?.click());
   bindIfExists("exportCsvButton", "click", exportCsv);
@@ -217,8 +264,10 @@ function bindEvents() {
   bindIfExists("toggleConsole", "click", toggleConsole);
   bindIfExists("clearConsole", "click", () => { appConsoleEntries = []; renderAppConsole(); });
   bindIfExists("copyConsole", "click", copyConsole);
+  bindWipBoardPanning();
   bindIfExists("addCustomerType", "click", addCustomerType);
-  bindIfExists("saveCustomerTypes", "click", saveCustomerTypes);
+  bindIfExists("addCustomerStatus", "click", addCustomerStatus);
+  bindIfExists("addWipColumn", "click", addWipColumn);
 
   bindIfExists("closeModal", "click", closeModal);
   bindIfExists("modal", "click", (e) => {
@@ -226,19 +275,44 @@ function bindEvents() {
   });
 }
 
+function togglePageMenu() {
+  const nav = document.getElementById("tabsNav");
+  const button = document.getElementById("menuToggle");
+  const scrim = document.getElementById("menuScrim");
+  const isOpen = nav?.classList.toggle("open");
+  button?.setAttribute("aria-expanded", String(Boolean(isOpen)));
+  if (scrim) scrim.hidden = !isOpen;
+}
+
+function closePageMenu() {
+  document.getElementById("tabsNav")?.classList.remove("open");
+  document.getElementById("menuToggle")?.setAttribute("aria-expanded", "false");
+  const scrim = document.getElementById("menuScrim");
+  if (scrim) scrim.hidden = true;
+}
+
 function handleDocumentClick(event) {
-  const action = event.target?.dataset?.action;
+  const target = event.target?.closest?.("[data-action]");
+  const action = target?.dataset?.action;
   if (!action) return;
 
+  if (target.tagName === "BUTTON") event.stopPropagation();
+
   if (action === "new-customer") newCustomer();
-  if (action === "edit-customer") editCustomer(event.target.dataset.id);
-  if (action === "delete-customer") deleteCustomer(event.target.dataset.id);
-  if (action === "focus-customer") focusCustomerOnMap(event.target.dataset.id);
-  if (action === "open-customer") openCustomerDetails(event.target.dataset.id);
-  if (action === "remove-contact") removeEditorContact(Number(event.target.dataset.index));
-  if (action === "remove-address") removeEditorAddress(Number(event.target.dataset.index));
-  if (action === "geocode-address") geocodeEditorAddress(Number(event.target.dataset.index));
-  if (action === "remove-type") removeCustomerType(Number(event.target.dataset.index));
+  if (action === "edit-customer") editCustomer(target.dataset.id);
+  if (action === "delete-customer") deleteCustomer(target.dataset.id);
+  if (action === "focus-customer") focusCustomerOnMap(target.dataset.id);
+  if (action === "open-customer") openCustomerDetails(target.dataset.id);
+  if (action === "remove-contact") removeEditorContact(Number(target.dataset.index));
+  if (action === "contact-prev") scrollContactTiles(-1);
+  if (action === "contact-next") scrollContactTiles(1);
+  if (action === "remove-address") removeEditorAddress(Number(target.dataset.index));
+  if (action === "geocode-address") geocodeEditorAddress(Number(target.dataset.index));
+  if (action === "move-pin") enablePinMove(target.dataset.customerId, target.dataset.addressId);
+  if (action === "add-place-customer") addPlaceAsCustomer(target.dataset.placeKey);
+  if (action === "remove-type") removeCustomerType(Number(target.dataset.index));
+  if (action === "remove-status") removeCustomerStatus(Number(target.dataset.index));
+  if (action === "remove-wip-column") removeWipColumn(Number(target.dataset.index));
 }
 
 async function login() {
@@ -269,7 +343,9 @@ async function ensureDefaultSettings() {
 
   if (!snap.exists()) {
     await setDoc(ref, {
-      customerTypes: db.settings.customerTypes,
+      customerTypes: ensureOtherType(db.settings.customerTypes),
+      customerStatuses: ensureLeadStatus(db.settings.customerStatuses),
+      wipColumns: ensureWipColumns(db.settings.wipColumns),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
@@ -281,29 +357,119 @@ function startFirestoreListeners() {
 
   settingsUnsubscribe = onSnapshot(doc(firestore, "settings", "global"), (snap) => {
     const data = snap.exists() ? snap.data() : {};
+    const activeSettingsScope = getActiveSettingsScope();
     db.settings = {
       ...db.settings,
       ...data,
+      customerTypes: ensureOtherType(activeSettingsScope === "types" ? db.settings.customerTypes : data.customerTypes || db.settings.customerTypes),
+      customerStatuses: ensureLeadStatus(activeSettingsScope === "statuses" ? db.settings.customerStatuses : data.customerStatuses || db.settings.customerStatuses),
+      wipColumns: ensureWipColumns(activeSettingsScope === "wipColumns" ? db.settings.wipColumns : data.wipColumns || db.settings.wipColumns),
       googleMapsApiKey: mapsApiKey
     };
-    renderEditor();
-    renderAll();
+    if (!isFocusWithin("editorHost")) renderEditor();
+    preserveFocus(renderAll);
   }, (error) => console.error("Settings listener failed:", error));
 
-  customersUnsubscribe = onSnapshot(query(collection(firestore, "customers"), orderBy("companyName")), (snap) => {
-    db.customers = snap.docs.map(d => normalizeCustomer({ id: d.id, ...d.data() }));
+  customersUnsubscribe = onSnapshot(collection(firestore, "customers"), (snap) => {
+    db.customers = snap.docs
+      .map(d => normalizeCustomer({ ...d.data(), id: d.id }))
+      .sort((a, b) => (a.companyName || "").localeCompare(b.companyName || ""));
+
     db.updatedAt = new Date().toISOString();
-    renderEditor();
-    renderAll();
+    if (!isFocusWithin("editorHost")) renderEditor();
+    preserveFocus(renderAll);
   }, (error) => console.error("Customers listener failed:", error));
 }
 
+
+function getActiveSettingsScope() {
+  const active = document.activeElement;
+  if (!active) return "";
+  if (document.getElementById("customerTypesHost")?.contains(active)) return "types";
+  if (document.getElementById("customerStatusesHost")?.contains(active)) return "statuses";
+  if (document.getElementById("wipColumnsHost")?.contains(active)) return "wipColumns";
+  return "";
+}
+
+
+function isFocusWithin(id) {
+  const host = document.getElementById(id);
+  return Boolean(host && document.activeElement && host.contains(document.activeElement));
+}
+
+function getFocusSelector(el) {
+  if (!el || el === document.body) return "";
+  if (el.id) return `#${CSS.escape(el.id)}`;
+
+  const contactIndex = el.getAttribute("data-contact-index");
+  const contactField = el.getAttribute("data-contact-field");
+  if (contactIndex !== null && contactField) {
+    return `[data-contact-index="${CSS.escape(contactIndex)}"][data-contact-field="${CSS.escape(contactField)}"]`;
+  }
+
+  const addressIndex = el.getAttribute("data-address-index");
+  const addressField = el.getAttribute("data-address-field");
+  if (addressIndex !== null && addressField) {
+    return `[data-address-index="${CSS.escape(addressIndex)}"][data-address-field="${CSS.escape(addressField)}"]`;
+  }
+
+  for (const attr of ["data-type-index", "data-status-index", "data-wip-column-index"]) {
+    const value = el.getAttribute(attr);
+    if (value !== null) return `[${attr}="${CSS.escape(value)}"]`;
+  }
+
+  return "";
+}
+
+function preserveFocus(callback) {
+  const active = document.activeElement;
+  const selector = getFocusSelector(active);
+  const start = typeof active?.selectionStart === "number" ? active.selectionStart : null;
+  const end = typeof active?.selectionEnd === "number" ? active.selectionEnd : null;
+
+  callback();
+
+  if (!selector) return;
+
+  requestAnimationFrame(() => {
+    const next = document.querySelector(selector);
+    if (!next || document.activeElement === next) return;
+    next.focus({ preventScroll: true });
+    if (start !== null && typeof next.setSelectionRange === "function") {
+      const max = String(next.value || "").length;
+      next.setSelectionRange(Math.min(start, max), Math.min(end ?? start, max));
+    }
+  });
+}
+
+function firstNonEmpty(...values) {
+  return values.map(value => String(value || "").trim()).find(Boolean) || "";
+}
+
+function getCustomerDisplayName(customer = {}) {
+  return firstNonEmpty(
+    customer.companyName,
+    customer.company,
+    customer.company_name,
+    customer["Company Name"],
+    customer["company name"],
+    customer.businessName,
+    customer.customerName,
+    customer.tradingName,
+    customer.name
+  );
+}
+
 function normalizeCustomer(c = {}) {
+  const companyName = getCustomerDisplayName(c);
+
   return {
     id: c.id || uid(),
-    companyName: c.companyName || "",
+    companyName,
     customerType: c.customerType || db?.settings?.customerTypes?.[0] || "Other",
-    status: c.status || "Lead",
+    status: c.status || db?.settings?.customerStatuses?.[0] || "Lead",
+    wipColumn: c.wipColumn || db?.settings?.wipColumns?.[0] || "un-allocated",
+    wipOrder: Number.isFinite(Number(c.wipOrder)) ? Number(c.wipOrder) : 0,
     phone: c.phone || "",
     email: c.email || "",
     notes: c.notes || "",
@@ -408,8 +574,10 @@ function switchTab(tabId) {
 
 function renderAll() {
   renderTypeSelects();
+  renderStatusSelects();
   renderCustomerCards();
-  renderCustomerTypes();
+  if (!getActiveSettingsScope()) renderCustomerTypes();
+  renderWipBoard();
   renderMapMarkers();
   renderStats();
 }
@@ -430,10 +598,23 @@ function renderTypeSelects() {
   const selects = ["mapTypeFilter", "customerTypeFilter"];
   for (const id of selects) {
     const el = document.getElementById(id);
+    if (!el) continue;
     const current = el.value;
     el.innerHTML = `<option value="">All customer types</option>` +
       db.settings.customerTypes.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
-    el.value = current;
+    el.value = db.settings.customerTypes.includes(current) ? current : "";
+  }
+}
+
+function renderStatusSelects() {
+  const selects = ["mapStatusFilter", "customerStatusFilter"];
+  for (const id of selects) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const current = el.value;
+    el.innerHTML = `<option value="">All statuses</option>` +
+      db.settings.customerStatuses.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    el.value = db.settings.customerStatuses.includes(current) ? current : "";
   }
 }
 
@@ -467,7 +648,7 @@ function getVisibleCustomers(prefix = "customer") {
 
 function clearFilters() {
   ["mapSearch", "mapTypeFilter", "mapStateFilter", "mapSuburbFilter", "mapStatusFilter",
-   "customerSearch", "customerTypeFilter", "customerStatusFilter"].forEach(id => {
+   "customerSearch", "customerTypeFilter", "customerStatusFilter", "wipSearch"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
@@ -484,7 +665,7 @@ function renderCustomerCards() {
   }
 
   host.innerHTML = customers.map(c => `
-    <article class="customer-card">
+    <article class="customer-card clickable-card" data-action="open-customer" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="View ${esc(c.companyName || "customer")} details">
       <div class="customer-card-title">
         <div>
           <h3>${esc(c.companyName || "Unnamed Company")}</h3>
@@ -515,6 +696,7 @@ function newCustomer() {
 }
 
 function editCustomer(id) {
+  closeModal();
   selectedCustomerId = id;
   renderEditor();
   switchTab("editorTab");
@@ -547,7 +729,7 @@ function renderEditor() {
       <div>
         <label>Status</label>
         <select id="editStatus">
-          ${["Lead", "Active", "Inactive", "Do Not Contact"].map(s => `<option ${s === c.status ? "selected" : ""}>${s}</option>`).join("")}
+          ${db.settings.customerStatuses.map(s => `<option ${s === c.status ? "selected" : ""}>${esc(s)}</option>`).join("")}
         </select>
       </div>
     </div>
@@ -577,7 +759,11 @@ function renderEditor() {
         <h3>Contact People</h3>
         <button class="btn primary small" id="addContactButton">Add Contact</button>
       </div>
-      <div id="editorContacts" class="nested-list"></div>
+      <div class="contact-carousel-controls">
+        <button class="btn ghost small" data-action="contact-prev" type="button">Prev</button>
+        <button class="btn ghost small" data-action="contact-next" type="button">Next</button>
+      </div>
+      <div id="editorContacts" class="contact-tiles"></div>
     </div>
 
     <div class="panel margin-top">
@@ -595,6 +781,9 @@ function renderEditor() {
   window.editorDraft = c;
   document.getElementById("addContactButton").addEventListener("click", addEditorContact);
   document.getElementById("addAddressButton").addEventListener("click", addEditorAddress);
+  editorCleanSnapshot = editorSnapshot(c);
+  bindEditorDirtyTracking();
+  updateSavePulse();
   renderEditorContacts();
   renderEditorAddresses();
 }
@@ -617,8 +806,9 @@ function renderEditorContacts() {
   const host = document.getElementById("editorContacts");
 
   host.innerHTML = c.contacts.map((x, i) => `
-    <div class="contact-row">
-      <div class="form-row five">
+    <div class="contact-card">
+      <div class="contact-avatar" aria-hidden="true">👤</div>
+      <div class="contact-fields-row">
         <div>
           <label>First Name</label>
           <input value="${esc(x.firstName || "")}" data-contact-index="${i}" data-contact-field="firstName" />
@@ -649,6 +839,7 @@ function renderEditorContacts() {
       const i = Number(input.dataset.contactIndex);
       const field = input.dataset.contactField;
       window.editorDraft.contacts[i][field] = input.value;
+      updateSavePulse();
     });
   });
 }
@@ -657,12 +848,14 @@ function addEditorContact() {
   readBaseEditorIntoDraft();
   window.editorDraft.contacts.push({ id: uid(), firstName: "", lastName: "", phone: "", email: "", role: "" });
   renderEditorContacts();
+  updateSavePulse();
 }
 
 function removeEditorContact(index) {
   readBaseEditorIntoDraft();
   window.editorDraft.contacts.splice(index, 1);
   renderEditorContacts();
+  updateSavePulse();
 }
 
 function renderEditorAddresses() {
@@ -734,6 +927,7 @@ function renderEditorAddresses() {
       const i = Number(input.dataset.addressIndex);
       const field = input.dataset.addressField;
       window.editorDraft.addresses[i][field] = field === "lat" || field === "lng" ? numOrNull(input.value) : input.value;
+      updateSavePulse();
     });
   });
 
@@ -781,6 +975,7 @@ function initAddressAutocompletes() {
       }
 
       renderEditorAddresses();
+      updateSavePulse();
       toast("Address selected from autocomplete.");
     });
 
@@ -818,12 +1013,14 @@ function addEditorAddress() {
   readBaseEditorIntoDraft();
   window.editorDraft.addresses.push({ id: uid(), label: "Main", street: "", suburb: "", state: "QLD", postcode: "", country: "Australia", lat: null, lng: null });
   renderEditorAddresses();
+  updateSavePulse();
 }
 
 function removeEditorAddress(index) {
   readBaseEditorIntoDraft();
   window.editorDraft.addresses.splice(index, 1);
   renderEditorAddresses();
+  updateSavePulse();
 }
 
 async function geocodeEditorAddress(index) {
@@ -846,6 +1043,7 @@ async function geocodeEditorAddress(index) {
       window.editorDraft.addresses[index].lat = Number(loc.lat().toFixed(7));
       window.editorDraft.addresses[index].lng = Number(loc.lng().toFixed(7));
       renderEditorAddresses();
+      updateSavePulse();
       toast("Address geocoded.");
     } else {
       console.error("Geocoding failed:", status, results);
@@ -854,12 +1052,13 @@ async function geocodeEditorAddress(index) {
   });
 }
 
-async function saveEditorCustomer() {
+async function saveEditorCustomer({ silent = false } = {}) {
   const c = readBaseEditorIntoDraft();
 
   if (!c.companyName.trim()) {
-    toast("Company name is required.");
-    return;
+    setEditorAutosaveStatus("Enter a company name to autosave");
+    if (!silent) toast("Company name is required.");
+    return false;
   }
 
   const payload = {
@@ -878,6 +1077,8 @@ async function saveEditorCustomer() {
       email: x.email || "",
       role: x.role || ""
     })),
+    wipColumn: getCustomerWipColumn(c),
+    wipOrder: Number.isFinite(Number(c.wipOrder)) ? Number(c.wipOrder) : 0,
     addresses: c.addresses.map(a => ({
       id: a.id || uid(),
       label: a.label || "Main",
@@ -901,10 +1102,15 @@ async function saveEditorCustomer() {
       selectedCustomerId = ref.id;
     }
 
-    toast("Customer saved.");
+    editorCleanSnapshot = editorSnapshot(readBaseEditorIntoDraft());
+    setEditorAutosaveStatus("Saved");
+    if (!silent) toast("Customer saved.");
+    return true;
   } catch (error) {
     console.error("Customer save failed:", error);
+    setEditorAutosaveStatus("Autosave failed");
     toast("Customer save failed. Check console.");
+    return false;
   }
 }
 
@@ -960,7 +1166,6 @@ function loadGoogleMaps() {
   }
 
   if (mapReady && map) {
-    console.info("Google Maps already initialised.");
     return;
   }
 
@@ -970,7 +1175,6 @@ function loadGoogleMaps() {
   }
 
   if (mapScriptLoading) {
-    console.info("Google Maps script is already loading.");
     return;
   }
 
@@ -982,7 +1186,6 @@ function loadGoogleMaps() {
   };
 
   window.__atlasGoogleMapsLoaded = function() {
-    console.info("Google Maps callback fired. Waiting for Maps classes.");
     initMap();
   };
 
@@ -1009,6 +1212,7 @@ function reloadMap() {
   geocoder = null;
   infoWindow = null;
   markers = [];
+  clearPlaceMarkers();
   mapReady = false;
   mapInitialising = false;
 
@@ -1023,12 +1227,10 @@ function reloadMap() {
 
 async function initMap() {
   if (mapInitialising) {
-    console.info("Google Maps initialisation is already running.");
     return;
   }
 
   if (mapReady && map) {
-    console.info("Google Maps is already ready.");
     return;
   }
 
@@ -1048,7 +1250,9 @@ async function initMap() {
       zoom: 9,
       mapTypeControl: true,
       streetViewControl: false,
-      fullscreenControl: true
+      fullscreenControl: true,
+      backgroundColor: "#101010",
+      styles: neutralDarkMapStyles
     });
 
     geocoder = new google.maps.Geocoder();
@@ -1061,8 +1265,8 @@ async function initMap() {
     renderMapMarkers();
     fitMapToMarkers(false);
     setTimeout(initAddressAutocompletes, 250);
+    setPlaceSearchStatus("Ready to search Places API (New).", "info");
 
-    console.info("Google Maps initialised successfully on startup.");
   } catch (error) {
     console.error("Google Maps initialisation failed:", error);
     document.getElementById("mapMissing").classList.add("show");
@@ -1072,9 +1276,330 @@ async function initMap() {
   }
 }
 
+
+function scrollContactTiles(direction) {
+  const host = document.getElementById("editorContacts");
+  if (!host) return;
+
+  const card = host.querySelector(".contact-card");
+  const amount = card ? card.getBoundingClientRect().width + 14 : host.clientWidth;
+  host.scrollBy({ left: direction * amount, behavior: "smooth" });
+}
+
+function disablePinMove() {
+  if (!activeMovePin) return;
+
+  clearInterval(activeMovePin.timer);
+  activeMovePin.marker.setDraggable(false);
+  activeMovePin.marker.setIcon(activeMovePin.baseIcon);
+  activeMovePin = null;
+}
+
+function enablePinMove(customerId, addressId) {
+  const marker = markers.find(m => m.customerId === customerId && m.addressId === addressId);
+  if (!marker) {
+    toast("Could not find that map pin.");
+    return;
+  }
+
+  disablePinMove();
+
+  const baseIcon = marker.baseIcon || marker.getIcon();
+  let large = false;
+  const timer = setInterval(() => {
+    large = !large;
+    marker.setIcon({
+      ...baseIcon,
+      scale: large ? 12 : 7,
+      fillColor: large ? "#dca101" : baseIcon.fillColor
+    });
+  }, 520);
+
+  marker.setDraggable(true);
+  activeMovePin = { marker, baseIcon, timer };
+  infoWindow.close();
+  toast("Move mode enabled. Drag the pulsing pin to save its new location.");
+}
+
+function looksLikePlaceResult(value) {
+  return Boolean(value && typeof value === "object" && (value.location || value.displayName || value.formattedAddress || value.id || value.placeId));
+}
+
+function extractPlacesFromSearchResponse(response) {
+  if (Array.isArray(response?.places)) return response.places;
+  if (Array.isArray(response)) return response;
+
+  return Object.values(response || {})
+    .flatMap(value => Array.isArray(value) ? value : [value])
+    .filter(looksLikePlaceResult);
+}
+
+async function ensurePlacesLibrary() {
+  if (placesLibrary) {
+    return placesLibrary;
+  }
+
+  if (window.google?.maps?.places?.Place) {
+    placesLibrary = { Place: window.google.maps.places.Place };
+    return placesLibrary;
+  }
+
+  if (!window.google?.maps?.importLibrary) {
+    throw new Error("Google Maps importLibrary is unavailable. Check that Maps JavaScript API v=weekly loaded successfully.");
+  }
+
+  placesLibrary = await google.maps.importLibrary("places");
+  return placesLibrary;
+}
+
+function setPlaceSearchStatus(message, level = "info") {
+  const el = document.getElementById("placeSearchStatus");
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.level = level;
+}
+
+function getLatLngLiteral(location) {
+  if (!location) return null;
+  const lat = typeof location.lat === "function" ? location.lat() : location.lat;
+  const lng = typeof location.lng === "function" ? location.lng() : location.lng;
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return null;
+  return { lat: Number(lat), lng: Number(lng) };
+}
+
+function getPlaceDisplayName(place = {}) {
+  const displayName = place.displayName;
+  if (typeof displayName === "string") return displayName;
+  return displayName?.text || place.name || "Unnamed Place";
+}
+
+function getPlaceKey(place, fallbackIndex = 0) {
+  return place.id || place.placeId || `place-${Date.now()}-${fallbackIndex}`;
+}
+
+function getPlaceField(place, fieldName) {
+  const value = place?.[fieldName];
+  if (typeof value === "string") return value;
+  return value?.text || "";
+}
+
+function getAddressComponent(components = [], type, short = false) {
+  const component = components.find(item => item.types?.includes(type));
+  if (!component) return "";
+  return short ? (component.shortText || component.short_name || component.longText || component.long_name || "") : (component.longText || component.long_name || component.shortText || component.short_name || "");
+}
+
+async function hydratePlaceForCustomer(place) {
+  if (!place || typeof place.fetchFields !== "function") return place;
+
+  await place.fetchFields({
+    fields: [
+      "id",
+      "displayName",
+      "formattedAddress",
+      "location",
+      "addressComponents",
+      "nationalPhoneNumber",
+      "internationalPhoneNumber",
+      "websiteURI",
+      "primaryType"
+    ]
+  });
+  return place;
+}
+
+function buildAddressFromPlace(place = {}) {
+  const components = place.addressComponents || [];
+  const streetNumber = getAddressComponent(components, "street_number");
+  const route = getAddressComponent(components, "route");
+  const street = [streetNumber, route].filter(Boolean).join(" ") || getPlaceField(place, "formattedAddress");
+  const suburb = getAddressComponent(components, "locality") ||
+    getAddressComponent(components, "postal_town") ||
+    getAddressComponent(components, "sublocality") ||
+    getAddressComponent(components, "sublocality_level_1") ||
+    getAddressComponent(components, "administrative_area_level_2");
+  const location = getLatLngLiteral(place.location);
+
+  return {
+    id: uid(),
+    label: "Google Place",
+    street,
+    suburb,
+    state: getAddressComponent(components, "administrative_area_level_1", true),
+    postcode: getAddressComponent(components, "postal_code"),
+    country: getAddressComponent(components, "country"),
+    lat: location?.lat ?? null,
+    lng: location?.lng ?? null
+  };
+}
+
+async function searchPlacesOnMap() {
+  if (!map) {
+    toast("Google Maps must be loaded before searching places.");
+    return;
+  }
+
+  const query = document.getElementById("placeSearchQuery")?.value.trim() || "business";
+  const primaryType = document.getElementById("placeSearchType")?.value.trim();
+  const radiusKm = Math.min(Math.max(Number(document.getElementById("placeSearchRadius")?.value || 10), 1), 50);
+
+  try {
+    setPlaceSearchStatus(`Searching Places API (New) for "${query}"...`, "info");
+    const { Place } = await ensurePlacesLibrary();
+    if (typeof Place?.searchByText !== "function") {
+      throw new Error("Places API (New) searchByText is unavailable. Enable Places API (New) for this key and confirm Maps JavaScript v=weekly loaded the places library.");
+    }
+
+    const center = map.getCenter();
+    const fields = [
+      "id",
+      "displayName",
+      "formattedAddress",
+      "location",
+      "nationalPhoneNumber",
+      "internationalPhoneNumber",
+      "websiteURI",
+      "primaryType"
+    ];
+    const request = {
+      textQuery: query,
+      fields,
+      includedType: primaryType || "",
+      useStrictTypeFiltering: Boolean(primaryType),
+      maxResultCount: 20,
+      locationBias: center || defaultCenter,
+      language: "en-AU",
+      region: "au"
+    };
+    const response = await Place.searchByText(request);
+    const places = extractPlacesFromSearchResponse(response);
+    renderPlaceMarkers(places);
+    setPlaceSearchStatus(`Showing ${places.length} Google Places result${places.length === 1 ? "" : "s"}.`, places.length ? "success" : "warning");
+    if (!places.length) toast("No Google Places results found for this map area.");
+  } catch (error) {
+    console.error("Places API (New) search failed:", error);
+    setPlaceSearchStatus("Places search failed. Check API enablement, billing and key restrictions.", "error");
+    toast("Places search failed. Check the console for details.");
+  }
+}
+
+function renderPlaceMarkers(places = []) {
+  clearPlaceMarkers();
+  if (!map || !window.google?.maps) {
+    return;
+  }
+  places.forEach((place, index) => {
+    const location = getLatLngLiteral(place.location);
+    if (!location) {
+      return;
+    }
+
+    const placeKey = getPlaceKey(place, index);
+    placesByKey.set(placeKey, place);
+
+    const marker = new google.maps.Marker({
+      position: location,
+      map,
+      title: getPlaceDisplayName(place),
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 8,
+        fillColor: "#2f80ed",
+        fillOpacity: 1,
+        strokeColor: "#ffffff",
+        strokeWeight: 2
+      }
+    });
+
+    marker.addListener("click", () => openPlaceInfoWindow(placeKey, marker));
+    placeMarkers.push(marker);
+  });
+
+  if (placeMarkers.length === 1) {
+    map.panTo(placeMarkers[0].getPosition());
+    map.setZoom(Math.max(map.getZoom() || 0, 15));
+    return;
+  }
+
+  if (placeMarkers.length > 1) {
+    const bounds = new google.maps.LatLngBounds();
+    placeMarkers.forEach(marker => bounds.extend(marker.getPosition()));
+    map.fitBounds(bounds, 64);
+  }
+}
+
+function clearPlaceMarkers() {
+  placeMarkers.forEach(marker => marker.setMap(null));
+  placeMarkers = [];
+  placesByKey = new Map();
+  setPlaceSearchStatus("Places are shown as blue pins.", "info");
+}
+
+function openPlaceInfoWindow(placeKey, marker) {
+  const place = placesByKey.get(placeKey);
+  if (!place || !infoWindow) return;
+
+  infoWindow.setContent(`
+    <div class="map-info place-info">
+      <h3>${esc(getPlaceDisplayName(place))}</h3>
+      <p><strong>Address:</strong> ${esc(getPlaceField(place, "formattedAddress") || "-")}</p>
+      <p><strong>Phone:</strong> ${esc(place.nationalPhoneNumber || place.internationalPhoneNumber || "-")}</p>
+      <p><strong>Type:</strong> ${esc(place.primaryType || "-")}</p>
+      ${place.websiteURI ? `<p><strong>Website:</strong> <a href="${esc(place.websiteURI)}" target="_blank" rel="noopener">Open website</a></p>` : ""}
+      <button data-action="add-place-customer" data-place-key="${esc(placeKey)}">Add as Customer</button>
+    </div>
+  `);
+  infoWindow.open({ map, anchor: marker });
+}
+
+async function addPlaceAsCustomer(placeKey) {
+  const place = placesByKey.get(placeKey);
+  if (!place) {
+    toast("That Google Place is no longer available. Search again and retry.");
+    return;
+  }
+
+  try {
+    await hydratePlaceForCustomer(place);
+
+    const placeId = place.id || place.placeId || "";
+    const name = getPlaceDisplayName(place);
+    const address = buildAddressFromPlace(place);
+    const payload = {
+      companyName: name,
+      customerType: db.settings.customerTypes.includes("Other") ? "Other" : db.settings.customerTypes[0] || "Other",
+      status: db.settings.customerStatuses.includes("Lead") ? "Lead" : db.settings.customerStatuses[0] || "Lead",
+      phone: place.nationalPhoneNumber || place.internationalPhoneNumber || "",
+      email: "",
+      notes: placeId ? `Added from Google Places. Place ID: ${placeId}` : "Added from Google Places.",
+      lastContacted: "",
+      googlePlaceId: placeId,
+      googlePlaceWebsite: place.websiteURI || "",
+      contacts: [],
+      addresses: [address],
+      wipColumn: getDefaultWipColumn(),
+      wipOrder: 0,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    const ref = await addDoc(collection(firestore, "customers"), payload);
+    selectedCustomerId = ref.id;
+    infoWindow?.close();
+    toast(`${name} added as a customer.`);
+    renderEditor();
+    switchTab("editorTab");
+  } catch (error) {
+    console.error("Adding Google Place as customer failed:", error);
+    toast("Could not add that Google Place as a customer.");
+  }
+}
+
+
 function renderMapMarkers() {
   if (!map || !window.google?.maps) return;
 
+  disablePinMove();
   markers.forEach(m => m.setMap(null));
   markers = [];
 
@@ -1087,7 +1612,7 @@ function renderMapMarkers() {
       const marker = new google.maps.Marker({
         position: { lat: Number(address.lat), lng: Number(address.lng) },
         map,
-        draggable: true,
+        draggable: false,
         title: `${customer.companyName} - ${address.label || "Address"}`,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
@@ -1109,10 +1634,15 @@ function renderMapMarkers() {
             <p><strong>Email:</strong> ${esc(customer.email || "-")}</p>
             <p><strong>Address:</strong> ${esc(formatAddress(address) || "-")}</p>
             <button data-action="open-customer" data-id="${esc(customer.id)}">View / Edit Customer</button>
+            <button data-action="move-pin" data-customer-id="${esc(customer.id)}" data-address-id="${esc(address.id)}">Move Pin</button>
           </div>
         `);
         infoWindow.open({ map, anchor: marker });
       });
+
+      marker.customerId = customer.id;
+      marker.addressId = address.id;
+      marker.baseIcon = marker.getIcon();
 
       marker.addListener("dragend", async () => {
         const pos = marker.getPosition();
@@ -1124,6 +1654,7 @@ function renderMapMarkers() {
             addresses: customer.addresses,
             updatedAt: serverTimestamp()
           }, { merge: true });
+          disablePinMove();
           toast("Marker coordinates saved.");
         } catch (error) {
           console.error("Marker coordinate save failed:", error);
@@ -1207,7 +1738,20 @@ function focusCustomerOnMap(id) {
     if (!map) return;
     map.setCenter({ lat: Number(first.lat), lng: Number(first.lng) });
     map.setZoom(15);
+    const marker = markers.find(m => m.customerId === id && m.addressId === first.id) || markers.find(m => m.customerId === id);
+    pulseMarkerOnce(marker);
   }, 120);
+}
+
+function pulseMarkerOnce(marker) {
+  if (!marker) return;
+  const baseIcon = marker.baseIcon || marker.getIcon();
+  marker.setIcon({
+    ...baseIcon,
+    scale: 13,
+    fillColor: "#dca101"
+  });
+  setTimeout(() => marker.setIcon(baseIcon), 650);
 }
 
 function fitMapToMarkers(showToast = true) {
@@ -1225,61 +1769,603 @@ function fitMapToMarkers(showToast = true) {
   }
 }
 
+function ensureOtherType(types = []) {
+  const clean = [...new Set(types.map(x => String(x || "").trim()).filter(Boolean))];
+  if (!clean.includes("Other")) clean.push("Other");
+  return clean;
+}
+
+function ensureLeadStatus(statuses = []) {
+  const clean = [...new Set(statuses.map(x => String(x || "").trim()).filter(Boolean))];
+  if (!clean.includes("Lead")) clean.unshift("Lead");
+  return clean;
+}
+
+
+function ensureWipColumns(columns = []) {
+  const clean = [...new Set(columns.map(x => String(x || "").trim()).filter(Boolean))];
+  const withDefaults = clean.length ? clean : ["un-assigned", "samples sent", "lead to be contacted"];
+  const hasFallback = withDefaults.some(column => {
+    const normalized = column.toLowerCase().trim();
+    return normalized === "un-assigned" || normalized === "un-allocated";
+  });
+
+  return hasFallback ? withDefaults : ["un-assigned", ...withDefaults];
+}
+
+function scheduleSettingsSave() {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(saveSettings, 450);
+}
+
+async function saveSettings() {
+  const activeSettingsScope = getActiveSettingsScope();
+  const customerTypes = ensureOtherType(db.settings.customerTypes);
+  const customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
+  const wipColumns = ensureWipColumns(db.settings.wipColumns);
+
+  if (activeSettingsScope !== "types") db.settings.customerTypes = customerTypes;
+  if (activeSettingsScope !== "statuses") db.settings.customerStatuses = customerStatuses;
+  if (activeSettingsScope !== "wipColumns") db.settings.wipColumns = wipColumns;
+
+  try {
+    await setDoc(doc(firestore, "settings", "global"), {
+      customerTypes,
+      customerStatuses,
+      wipColumns,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+
+    toast("Settings saved automatically.");
+  } catch (error) {
+    console.error("Settings save failed:", error);
+    toast("Settings autosave failed.");
+  }
+}
+
+
+function bindWipBoardPanning() {
+  const board = document.getElementById("wipBoard");
+  if (!board) return;
+
+  let isPanning = false;
+  let startX = 0;
+  let startScrollLeft = 0;
+
+  board.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".wip-card")) return;
+
+    isPanning = true;
+    startX = event.clientX;
+    startScrollLeft = board.scrollLeft;
+    board.classList.add("is-panning");
+    board.setPointerCapture(event.pointerId);
+  });
+
+  board.addEventListener("pointermove", (event) => {
+    if (!isPanning) return;
+    event.preventDefault();
+    board.scrollLeft = startScrollLeft - (event.clientX - startX);
+  });
+
+  const endPan = (event) => {
+    if (!isPanning) return;
+    isPanning = false;
+    board.classList.remove("is-panning");
+    if (board.hasPointerCapture(event.pointerId)) board.releasePointerCapture(event.pointerId);
+  };
+
+  board.addEventListener("pointerup", endPan);
+  board.addEventListener("pointercancel", endPan);
+  board.addEventListener("pointerleave", endPan);
+}
+
+function renderWipBoard() {
+  const host = document.getElementById("wipBoard");
+  if (!host) return;
+
+  destroyWipSortables();
+  const columns = ensureWipColumns(db.settings.wipColumns);
+  if (getActiveSettingsScope() !== "wipColumns") db.settings.wipColumns = columns;
+
+  const buckets = getWipBoardBuckets(columns);
+  host.innerHTML = columns.map(column => {
+    const customers = getCustomersForWipColumn(column, buckets);
+    return `
+      <section class="wip-column">
+        <div class="wip-column-header">
+          <h3>${esc(column)}</h3>
+          <span class="badge">${customers.length}</span>
+        </div>
+        <div class="wip-column-list" data-wip-column="${esc(column)}">
+          ${customers.map(c => `
+            <article class="wip-card" data-id="${esc(c.id)}" data-action="open-customer">
+              <span class="wip-drag-handle" aria-hidden="true">⋮⋮</span>
+              <strong>${esc(c.companyName || "Unnamed Company")}</strong>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  initWipSortables();
+}
+
+function getWipResolutionDetails(customer, columns = ensureWipColumns(db.settings.wipColumns)) {
+  const rawColumn = String(customer.wipColumn || "").trim();
+  const exactColumn = columns.find(column => column === rawColumn);
+  const caseInsensitiveColumn = columns.find(column => column.toLowerCase().trim() === rawColumn.toLowerCase());
+  const fallbackColumn = getDefaultWipColumn(columns);
+  const resolvedColumn = exactColumn || caseInsensitiveColumn || fallbackColumn;
+
+  return {
+    rawColumn,
+    resolvedColumn,
+    matchedBy: exactColumn ? "exact" : caseInsensitiveColumn ? "case-insensitive" : "fallback",
+    fallbackColumn
+  };
+}
+
+function getWipCustomerHaystack(customer = {}) {
+  return [
+    customer.id,
+    getCustomerDisplayName(customer),
+    customer.customerType,
+    customer.status,
+    customer.phone,
+    customer.email,
+    customer.notes,
+    customer.lastContacted,
+    ...(customer.contacts || []).flatMap(contact => [contact.firstName, contact.lastName, contact.name, contact.role, contact.phone, contact.email]),
+    ...(customer.addresses || []).flatMap(address => [address.label, address.street, address.suburb, address.state, address.postcode, address.country])
+  ].join(" ").toLowerCase();
+}
+
+function getDefaultWipColumn(columns = ensureWipColumns(db.settings.wipColumns)) {
+  return columns.find(c => c.toLowerCase().trim() === "un-assigned") ||
+    columns.find(c => c.toLowerCase().trim() === "un-allocated") ||
+    columns[0];
+}
+
+function getCustomerWipColumn(customer, columns = ensureWipColumns(db.settings.wipColumns)) {
+  const rawColumn = String(customer.wipColumn || "").trim();
+  const exactColumn = columns.find(column => column === rawColumn);
+  if (exactColumn) return exactColumn;
+
+  const caseInsensitiveColumn = columns.find(column => column.toLowerCase().trim() === rawColumn.toLowerCase());
+  return caseInsensitiveColumn || getDefaultWipColumn(columns);
+}
+
+function getWipBoardBuckets(columns) {
+  const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
+  const buckets = new Map(columns.map(column => [column, []]));
+
+  db.customers.forEach(customer => {
+    if (search && !getWipCustomerHaystack(customer).includes(search)) return;
+
+    const column = getCustomerWipColumn(customer, columns);
+    if (!buckets.has(column)) buckets.set(column, []);
+    buckets.get(column).push(customer);
+  });
+
+  buckets.forEach(customers => {
+    customers.sort((a, b) => (Number(a.wipOrder) || 0) - (Number(b.wipOrder) || 0) || (a.companyName || "").localeCompare(b.companyName || ""));
+  });
+
+  return buckets;
+}
+
+function getCustomersForWipColumn(column, buckets = getWipBoardBuckets(ensureWipColumns(db.settings.wipColumns))) {
+  return buckets.get(column) || [];
+}
+
+function destroyWipSortables() {
+  wipSortableInstances.forEach(instance => instance.destroy());
+  wipSortableInstances = [];
+}
+
+function initWipSortables() {
+  if (!window.Sortable) {
+    console.warn("SortableJS is not loaded yet; WIP drag/drop is disabled until it loads.");
+    return;
+  }
+
+  const lists = document.querySelectorAll(".wip-column-list");
+
+  lists.forEach(list => {
+    wipSortableInstances.push(new window.Sortable(list, {
+      draggable: ".wip-card",
+      disabled: false,
+      animation: 120,
+      group: "shared",
+      swapThreshold: 1,
+      ghostClass: "sortable-ghost",
+      chosenClass: "wip-card-chosen",
+      dragClass: "wip-card-drag",
+      direction: "vertical",
+      forceFallback: true,
+      fallbackOnBody: true,
+      fallbackTolerance: 3,
+      onStart: function() {
+        wipCardRects = captureWipCardRects();
+      },
+      onChange: function() {
+        animateWipCardMoves();
+      },
+      onEnd: function() {
+        animateWipCardMoves();
+        saveWipBoardOrder();
+      },
+      onMove: (evt, originalEvent) => handleWipSortMove(evt, originalEvent)
+    }));
+  });
+}
+
+function captureWipCardRects() {
+  return new Map([...document.querySelectorAll(".wip-card")].map(card => [card.dataset.id, card.getBoundingClientRect()]));
+}
+
+function animateWipCardMoves() {
+  const previousRects = wipCardRects;
+  const nextRects = captureWipCardRects();
+
+  nextRects.forEach((nextRect, id) => {
+    const previousRect = previousRects.get(id);
+    const card = document.querySelector(`.wip-card[data-id="${CSS.escape(id)}"]`);
+    if (!previousRect || !card || card.classList.contains("sortable-ghost")) return;
+
+    const deltaX = previousRect.left - nextRect.left;
+    const deltaY = previousRect.top - nextRect.top;
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+
+    card.style.transition = "none";
+    card.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+
+    requestAnimationFrame(() => {
+      card.style.transition = "transform 180ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms ease, border-color 120ms ease";
+      card.style.transform = "";
+    });
+  });
+
+  wipCardRects = nextRects;
+}
+
+
+function handleWipSortMove() {
+  return true;
+}
+
+async function saveWipBoardOrder() {
+  const batch = writeBatch(firestore);
+  let writes = 0;
+
+  document.querySelectorAll(".wip-column-list").forEach(list => {
+    const column = list.dataset.wipColumn;
+    [...list.querySelectorAll(".wip-card")].forEach((card, index) => {
+      const id = card.dataset.id;
+      if (!id) return;
+
+      const customer = db.customers.find(c => c.id === id);
+      if (customer) {
+        customer.wipColumn = column;
+        customer.wipOrder = index;
+      }
+
+      batch.set(doc(firestore, "customers", id), {
+        wipColumn: column,
+        wipOrder: index,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      writes += 1;
+    });
+  });
+
+  if (!writes) return;
+
+  try {
+    await batch.commit();
+    toast("WIP board updated.");
+  } catch (error) {
+    console.error("WIP board save failed:", error);
+    toast("WIP board save failed.");
+    renderWipBoard();
+  }
+}
+
 function renderCustomerTypes() {
-  const host = document.getElementById("customerTypesHost");
-
-  host.innerHTML = db.settings.customerTypes.map((type, i) => `
-    <div class="type-row">
-      <div class="form-row two">
-        <div>
-          <label>Customer Type</label>
-          <input value="${esc(type)}" data-type-index="${i}" />
-        </div>
-        <div style="display:flex;align-items:end;gap:10px;">
-          <button class="btn danger small" data-action="remove-type" data-index="${i}">Remove</button>
-        </div>
-      </div>
-    </div>
-  `).join("");
-
-  host.querySelectorAll("[data-type-index]").forEach(input => {
-    input.addEventListener("input", () => {
-      db.settings.customerTypes[Number(input.dataset.typeIndex)] = input.value;
+  renderSettingsList({
+    hostId: "customerTypesHost",
+    items: db.settings.customerTypes,
+    lockedValue: "Other",
+    label: "Customer type",
+    inputAttr: "data-type-index",
+    removeAction: "remove-type",
+    onInput(index, value) {
+      db.settings.customerTypes[index] = value;
       renderTypeSelects();
+      scheduleSettingsSave();
+    }
+  });
+  renderCustomerStatuses();
+  renderWipColumnsSettings();
+}
+
+function renderCustomerStatuses() {
+  renderSettingsList({
+    hostId: "customerStatusesHost",
+    items: db.settings.customerStatuses,
+    lockedValue: "Lead",
+    label: "Status",
+    inputAttr: "data-status-index",
+    removeAction: "remove-status",
+    onInput(index, value) {
+      db.settings.customerStatuses[index] = value;
+      renderStatusSelects();
+      scheduleSettingsSave();
+    }
+  });
+}
+
+function renderWipColumnsSettings() {
+  renderSettingsList({
+    hostId: "wipColumnsHost",
+    items: db.settings.wipColumns,
+    lockedValue: null,
+    label: "WIP column",
+    inputAttr: "data-wip-column-index",
+    removeAction: "remove-wip-column",
+    onInput(index, value) {
+      const oldColumn = db.settings.wipColumns[index];
+      db.settings.wipColumns[index] = value;
+      updateCustomersForRenamedWipColumn(oldColumn, value);
+      renderWipBoard();
+      scheduleSettingsSave();
+    },
+    async onBlur(input, index) {
+      const oldColumn = input.dataset.originalValue;
+      const newColumn = db.settings.wipColumns[index];
+      if (oldColumn && newColumn && oldColumn !== newColumn) {
+        updateCustomersForRenamedWipColumn(oldColumn, newColumn);
+        await reassignCustomers("wipColumn", oldColumn, newColumn);
+        input.dataset.originalValue = newColumn;
+      }
+    },
+    sortable: true
+  });
+  initWipColumnSettingsSortable();
+}
+
+function initWipColumnSettingsSortable() {
+  const host = document.getElementById("wipColumnsHost");
+  if (!host || !window.Sortable) return;
+
+  new window.Sortable(host, {
+    animation: 0,
+    ghostClass: "sortable-ghost",
+    direction: "vertical",
+    handle: "[data-settings-drag-handle]",
+    onEnd: () => {
+      db.settings.wipColumns = [...host.querySelectorAll("[data-wip-column-index]")]
+        .map(input => input.value);
+      host.querySelectorAll("[data-wip-column-index]").forEach((input, index) => {
+        input.setAttribute("data-wip-column-index", String(index));
+      });
+      host.querySelectorAll('[data-action="remove-wip-column"]').forEach((button, index) => {
+        button.setAttribute("data-index", String(index));
+      });
+      renderWipBoard();
+      scheduleSettingsSave();
+    }
+  });
+}
+
+function addWipColumn() {
+  db.settings.wipColumns.push("New WIP Column");
+  db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
+  renderAll();
+  scheduleSettingsSave();
+}
+
+function removeWipColumn(index) {
+  const column = db.settings.wipColumns[index];
+  if (!column || db.settings.wipColumns.length <= 1) {
+    toast("At least one WIP column is required.");
+    return;
+  }
+
+  const fallback = db.settings.wipColumns.find((_, i) => i !== index) || "un-allocated";
+  const affected = db.customers.filter(c => c.wipColumn === column);
+
+  showConfirmModal({
+    title: "Remove WIP column?",
+    message: `Remove “${column}”? ${affected.length} customer(s) in this column will move to “${fallback}”.`,
+    onConfirm: async () => {
+      db.settings.wipColumns.splice(index, 1);
+      db.settings.wipColumns = ensureWipColumns(db.settings.wipColumns);
+      await reassignCustomers("wipColumn", column, fallback);
+      await saveSettings();
+      renderAll();
+    }
+  });
+}
+
+function updateCustomersForRenamedWipColumn(oldColumn, newColumn) {
+  if (!oldColumn || !newColumn || oldColumn === newColumn) return;
+  db.customers.forEach(c => {
+    if (c.wipColumn === oldColumn) c.wipColumn = newColumn;
+  });
+}
+
+function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, removeAction, onInput, onBlur, sortable = false }) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+
+  host.innerHTML = items.map((item, i) => {
+    const locked = item === lockedValue;
+    return `
+      <div class="settings-list-row ${locked ? "locked" : ""} ${sortable ? "sortable-settings-row" : ""}">
+        ${sortable ? `<span class="settings-drag-handle" data-settings-drag-handle aria-hidden="true">↕</span>` : ""}
+        <div>
+          <label>${esc(label)}</label>
+          <input value="${esc(item)}" ${inputAttr}="${i}" data-original-value="${esc(item)}" ${locked ? "readonly" : ""} />
+        </div>
+        <button class="btn danger small" data-action="${removeAction}" data-index="${i}" ${locked ? "disabled" : ""}>Remove</button>
+      </div>
+    `;
+  }).join("");
+
+  host.querySelectorAll(`[${inputAttr}]`).forEach(input => {
+    input.addEventListener("input", () => onInput(Number(input.getAttribute(inputAttr)), input.value));
+    input.addEventListener("blur", async () => {
+      const index = Number(input.getAttribute(inputAttr));
+
+      if (lockedValue === null) {
+        db.settings.wipColumns = [...host.querySelectorAll(`[${inputAttr}]`)].map(el => el.value);
+      }
+
+      if (onBlur) await onBlur(input, index);
+
+      const sourceItems = lockedValue === null ? db.settings.wipColumns : items;
+      const cleaned = sourceItems.map(x => String(x || "").trim()).filter(Boolean);
+      sourceItems.splice(0, sourceItems.length, ...[...new Set(cleaned)]);
+      if (lockedValue === "Other") db.settings.customerTypes = ensureOtherType(sourceItems);
+      if (lockedValue === "Lead") db.settings.customerStatuses = ensureLeadStatus(sourceItems);
+      if (lockedValue === null) db.settings.wipColumns = ensureWipColumns(sourceItems);
+      renderAll();
+      scheduleSettingsSave();
     });
   });
 }
 
 function addCustomerType() {
   db.settings.customerTypes.push("New Type");
+  db.settings.customerTypes = ensureOtherType(db.settings.customerTypes);
   renderAll();
+  scheduleSettingsSave();
+}
+
+function addCustomerStatus() {
+  db.settings.customerStatuses.push("New Status");
+  db.settings.customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
+  renderAll();
+  scheduleSettingsSave();
+}
+
+function showConfirmModal({ title, message, confirmText = "Delete", onConfirm }) {
+  document.getElementById("modalTitle").textContent = title;
+  document.getElementById("modalContent").innerHTML = `
+    <div class="mini-card">
+      <div class="card-line">${esc(message)}</div>
+    </div>
+    <div class="confirm-actions">
+      <button class="btn ghost" id="cancelConfirm">Cancel</button>
+      <button class="btn danger" id="confirmAction">${esc(confirmText)}</button>
+    </div>
+  `;
+  document.getElementById("modal").classList.add("show");
+  document.getElementById("cancelConfirm").addEventListener("click", closeModal);
+  document.getElementById("confirmAction").addEventListener("click", async () => {
+    closeModal();
+    await onConfirm();
+  });
 }
 
 function removeCustomerType(index) {
   const type = db.settings.customerTypes[index];
+  if (!type || type === "Other") return;
 
-  if (db.customers.some(c => c.customerType === type)) {
-    toast("Cannot remove a type that is currently used by customers.");
-    return;
-  }
-
-  db.settings.customerTypes.splice(index, 1);
-  renderAll();
+  const affected = db.customers.filter(c => c.customerType === type);
+  showConfirmModal({
+    title: "Remove customer type?",
+    message: `Remove “${type}”? ${affected.length} existing customer(s) using this type will be changed to “Other”.`,
+    onConfirm: async () => {
+      db.settings.customerTypes.splice(index, 1);
+      db.settings.customerTypes = ensureOtherType(db.settings.customerTypes);
+      await reassignCustomers("customerType", type, "Other");
+      await saveSettings();
+      renderAll();
+    }
+  });
 }
 
-async function saveCustomerTypes() {
-  try {
-    await setDoc(doc(firestore, "settings", "global"), {
-      customerTypes: db.settings.customerTypes.map(x => x.trim()).filter(Boolean),
+function removeCustomerStatus(index) {
+  const status = db.settings.customerStatuses[index];
+  if (!status || status === "Lead") return;
+
+  const affected = db.customers.filter(c => c.status === status);
+  showConfirmModal({
+    title: "Remove status?",
+    message: `Remove “${status}”? ${affected.length} existing customer(s) using this status will be changed to “Lead”.`,
+    onConfirm: async () => {
+      db.settings.customerStatuses.splice(index, 1);
+      db.settings.customerStatuses = ensureLeadStatus(db.settings.customerStatuses);
+      await reassignCustomers("status", status, "Lead");
+      await saveSettings();
+      renderAll();
+    }
+  });
+}
+
+async function reassignCustomers(field, oldValue, newValue) {
+  const affected = db.customers.filter(c => c[field] === oldValue);
+  if (!affected.length) return;
+
+  const batch = writeBatch(firestore);
+  affected.forEach(c => {
+    batch.set(doc(firestore, "customers", c.id), {
+      [field]: newValue,
       updatedAt: serverTimestamp()
     }, { merge: true });
-
-    toast("Customer types saved.");
-  } catch (error) {
-    console.error("Customer type save failed:", error);
-    toast("Customer type save failed.");
-  }
+  });
+  await batch.commit();
 }
+
+function editorSnapshot(customer) {
+  return JSON.stringify({
+    companyName: customer.companyName || "",
+    customerType: customer.customerType || "Other",
+    status: customer.status || "Lead",
+    phone: customer.phone || "",
+    email: customer.email || "",
+    notes: customer.notes || "",
+    lastContacted: customer.lastContacted || "",
+    contacts: customer.contacts || [],
+    addresses: customer.addresses || []
+  });
+}
+
+function bindEditorDirtyTracking() {
+  document.querySelectorAll("#editorHost input, #editorHost select, #editorHost textarea").forEach(el => {
+    if (el.readOnly) return;
+    el.addEventListener("input", () => {
+      readBaseEditorIntoDraft();
+      updateSavePulse();
+    });
+    el.addEventListener("change", () => {
+      readBaseEditorIntoDraft();
+      updateSavePulse();
+    });
+  });
+}
+
+function scheduleEditorAutosave() {
+  clearTimeout(editorAutosaveTimer);
+  setEditorAutosaveStatus("Saving...");
+  editorAutosaveTimer = setTimeout(() => saveEditorCustomer({ silent: true }), 350);
+}
+
+function setEditorAutosaveStatus(message) {
+  const el = document.getElementById("editorAutosaveStatus");
+  if (el) el.textContent = message || "Autosaves changes";
+}
+
+function updateSavePulse() {
+  if (!window.editorDraft) return;
+  const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
+  if (dirty) scheduleEditorAutosave();
+}
+
 
 
 function toggleConsole() {
@@ -1386,9 +2472,11 @@ async function importJsonFile(event) {
 
     await importCustomersToFirestore(customers.map(normalizeCustomer));
 
-    if (parsed.settings?.customerTypes) {
+    if (parsed.settings?.customerTypes || parsed.settings?.customerStatuses || parsed.settings?.wipColumns) {
       await setDoc(doc(firestore, "settings", "global"), {
-        customerTypes: parsed.settings.customerTypes,
+        customerTypes: ensureOtherType(parsed.settings.customerTypes || db.settings.customerTypes),
+        customerStatuses: ensureLeadStatus(parsed.settings.customerStatuses || db.settings.customerStatuses),
+        wipColumns: ensureWipColumns(parsed.settings.wipColumns || db.settings.wipColumns),
         updatedAt: serverTimestamp()
       }, { merge: true });
     }
