@@ -1331,6 +1331,11 @@ function enablePinMove(customerId, addressId) {
 async function ensurePlacesLibrary() {
   if (placesLibrary) return placesLibrary;
 
+  if (window.google?.maps?.places?.Place) {
+    placesLibrary = { Place: window.google.maps.places.Place };
+    return placesLibrary;
+  }
+
   if (!window.google?.maps?.importLibrary) {
     throw new Error("Google Maps importLibrary is unavailable. Check that Maps JavaScript API v=weekly loaded successfully.");
   }
@@ -1376,6 +1381,25 @@ function getAddressComponent(components = [], type, short = false) {
   return short ? (component.shortText || component.short_name || component.longText || component.long_name || "") : (component.longText || component.long_name || component.shortText || component.short_name || "");
 }
 
+async function hydratePlaceForCustomer(place) {
+  if (!place || typeof place.fetchFields !== "function") return place;
+
+  await place.fetchFields({
+    fields: [
+      "id",
+      "displayName",
+      "formattedAddress",
+      "location",
+      "addressComponents",
+      "nationalPhoneNumber",
+      "internationalPhoneNumber",
+      "websiteURI",
+      "primaryType"
+    ]
+  });
+  return place;
+}
+
 function buildAddressFromPlace(place = {}) {
   const components = place.addressComponents || [];
   const streetNumber = getAddressComponent(components, "street_number");
@@ -1412,16 +1436,14 @@ async function searchPlacesOnMap() {
   const radiusKm = Math.min(Math.max(Number(document.getElementById("placeSearchRadius")?.value || 10), 1), 50);
 
   try {
-    setPlaceSearchStatus("Searching Places API (New)...", "info");
+    setPlaceSearchStatus(`Searching Places API (New) for "${query}"...`, "info");
     const { Place } = await ensurePlacesLibrary();
     const center = map.getCenter();
-    const centerLiteral = getLatLngLiteral(center) || defaultCenter;
     const fields = [
       "id",
       "displayName",
       "formattedAddress",
       "location",
-      "addressComponents",
       "nationalPhoneNumber",
       "internationalPhoneNumber",
       "websiteURI",
@@ -1430,15 +1452,15 @@ async function searchPlacesOnMap() {
     const request = {
       textQuery: query,
       fields,
+      includedType: primaryType || "",
+      useStrictTypeFiltering: Boolean(primaryType),
       maxResultCount: 20,
-      locationBias: {
-        center: centerLiteral,
-        radius: radiusKm * 1000
-      }
+      locationBias: center || defaultCenter,
+      language: "en-AU",
+      region: "au"
     };
 
-    if (primaryType) request.includedType = primaryType;
-
+    console.warn("[places-search] searchByText request", { ...request, radiusKm });
     const response = await Place.searchByText(request);
     const places = response?.places || [];
     renderPlaceMarkers(places);
@@ -1519,28 +1541,30 @@ async function addPlaceAsCustomer(placeKey) {
     return;
   }
 
-  const placeId = place.id || place.placeId || "";
-  const name = getPlaceDisplayName(place);
-  const address = buildAddressFromPlace(place);
-  const payload = {
-    companyName: name,
-    customerType: db.settings.customerTypes.includes("Other") ? "Other" : db.settings.customerTypes[0] || "Other",
-    status: db.settings.customerStatuses.includes("Lead") ? "Lead" : db.settings.customerStatuses[0] || "Lead",
-    phone: place.nationalPhoneNumber || place.internationalPhoneNumber || "",
-    email: "",
-    notes: placeId ? `Added from Google Places. Place ID: ${placeId}` : "Added from Google Places.",
-    lastContacted: "",
-    googlePlaceId: placeId,
-    googlePlaceWebsite: place.websiteURI || "",
-    contacts: [],
-    addresses: [address],
-    wipColumn: getDefaultWipColumn(),
-    wipOrder: 0,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  };
-
   try {
+    await hydratePlaceForCustomer(place);
+
+    const placeId = place.id || place.placeId || "";
+    const name = getPlaceDisplayName(place);
+    const address = buildAddressFromPlace(place);
+    const payload = {
+      companyName: name,
+      customerType: db.settings.customerTypes.includes("Other") ? "Other" : db.settings.customerTypes[0] || "Other",
+      status: db.settings.customerStatuses.includes("Lead") ? "Lead" : db.settings.customerStatuses[0] || "Lead",
+      phone: place.nationalPhoneNumber || place.internationalPhoneNumber || "",
+      email: "",
+      notes: placeId ? `Added from Google Places. Place ID: ${placeId}` : "Added from Google Places.",
+      lastContacted: "",
+      googlePlaceId: placeId,
+      googlePlaceWebsite: place.websiteURI || "",
+      contacts: [],
+      addresses: [address],
+      wipColumn: getDefaultWipColumn(),
+      wipOrder: 0,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
     const ref = await addDoc(collection(firestore, "customers"), payload);
     selectedCustomerId = ref.id;
     infoWindow?.close();
@@ -1552,6 +1576,7 @@ async function addPlaceAsCustomer(placeKey) {
     toast("Could not add that Google Place as a customer.");
   }
 }
+
 
 function renderMapMarkers() {
   if (!map || !window.google?.maps) return;
