@@ -97,7 +97,6 @@ function init() {
     startFirestoreListeners();
     loadGoogleMaps();
 
-    console.info("Atlas Tools CRM Firebase v1.4.0 loaded.");
   });
 }
 
@@ -232,12 +231,6 @@ function bindEvents() {
       searchPlacesOnMap();
     }
   });
-  debugPlaces("controls bound", {
-    hasSearchButton: Boolean(document.getElementById("searchPlacesButton")),
-    hasClearButton: Boolean(document.getElementById("clearPlacesButton")),
-    hasQueryInput: Boolean(document.getElementById("placeSearchQuery")),
-    hasStatus: Boolean(document.getElementById("placeSearchStatus"))
-  });
 
   bindIfExists("importCsvButton", "click", () => document.getElementById("csvFileInput")?.click());
   bindIfExists("exportCsvButton", "click", exportCsv);
@@ -355,31 +348,10 @@ function startFirestoreListeners() {
   }, (error) => console.error("Settings listener failed:", error));
 
   customersUnsubscribe = onSnapshot(collection(firestore, "customers"), (snap) => {
-    const customerSnapshotRows = snap.docs.map(d => {
-      const data = d.data();
-      const normalized = normalizeCustomer({ ...data, id: d.id });
-      return {
-        firestoreId: d.id,
-        dataId: data.id || "",
-        companyName: normalized.companyName || "(blank)",
-        rawWipColumn: data.wipColumn || "(blank)",
-        normalizedWipColumn: normalized.wipColumn || "(blank)",
-        wipOrder: normalized.wipOrder,
-        normalized
-      };
-    });
-
-    db.customers = customerSnapshotRows
-      .map(row => row.normalized)
+    db.customers = snap.docs
+      .map(d => normalizeCustomer({ ...d.data(), id: d.id }))
       .sort((a, b) => (a.companyName || "").localeCompare(b.companyName || ""));
 
-    console.warn("[wip-debug] customers snapshot", {
-      firestoreDocs: snap.docs.length,
-      normalizedCustomers: db.customers.length,
-      emptyCompanyName: db.customers.filter(c => !c.companyName).length,
-      wipColumnCounts: countBy(db.customers.map(c => c.wipColumn || "(blank)"))
-    });
-    console.table(customerSnapshotRows.map(({ normalized, ...row }) => row));
     db.updatedAt = new Date().toISOString();
     if (!isFocusWithin("editorHost")) renderEditor();
     preserveFocus(renderAll);
@@ -581,11 +553,7 @@ function renderAll() {
   renderTypeSelects();
   renderStatusSelects();
   renderCustomerCards();
-  if (getActiveSettingsScope()) {
-    console.debug("[settings-autosave] skipped settings list render while editing", { scope: getActiveSettingsScope() });
-  } else {
-    renderCustomerTypes();
-  }
+  if (!getActiveSettingsScope()) renderCustomerTypes();
   renderWipBoard();
   renderMapMarkers();
   renderStats();
@@ -1175,7 +1143,6 @@ function loadGoogleMaps() {
   }
 
   if (mapReady && map) {
-    console.info("Google Maps already initialised.");
     return;
   }
 
@@ -1185,7 +1152,6 @@ function loadGoogleMaps() {
   }
 
   if (mapScriptLoading) {
-    console.info("Google Maps script is already loading.");
     return;
   }
 
@@ -1197,7 +1163,6 @@ function loadGoogleMaps() {
   };
 
   window.__atlasGoogleMapsLoaded = function() {
-    console.info("Google Maps callback fired. Waiting for Maps classes.");
     initMap();
   };
 
@@ -1239,12 +1204,10 @@ function reloadMap() {
 
 async function initMap() {
   if (mapInitialising) {
-    console.info("Google Maps initialisation is already running.");
     return;
   }
 
   if (mapReady && map) {
-    console.info("Google Maps is already ready.");
     return;
   }
 
@@ -1279,7 +1242,6 @@ async function initMap() {
     setTimeout(initAddressAutocompletes, 250);
     setPlaceSearchStatus("Ready to search Places API (New).", "info");
 
-    console.info("Google Maps initialised successfully on startup.");
   } catch (error) {
     console.error("Google Maps initialisation failed:", error);
     document.getElementById("mapMissing").classList.add("show");
@@ -1334,10 +1296,6 @@ function enablePinMove(customerId, addressId) {
   toast("Move mode enabled. Drag the pulsing pin to save its new location.");
 }
 
-function debugPlaces(message, details = {}) {
-  console.warn(`[places-debug] ${message}`, details);
-}
-
 function looksLikePlaceResult(value) {
   return Boolean(value && typeof value === "object" && (value.location || value.displayName || value.formattedAddress || value.id || value.placeId));
 }
@@ -1353,21 +1311,11 @@ function extractPlacesFromSearchResponse(response) {
 
 async function ensurePlacesLibrary() {
   if (placesLibrary) {
-    debugPlaces("using cached Places library", { hasPlace: Boolean(placesLibrary.Place), hasSearchByText: typeof placesLibrary.Place?.searchByText === "function" });
     return placesLibrary;
   }
 
-  debugPlaces("loading Places library", {
-    hasGoogle: Boolean(window.google),
-    hasMaps: Boolean(window.google?.maps),
-    hasImportLibrary: typeof window.google?.maps?.importLibrary === "function",
-    hasPlacesNamespace: Boolean(window.google?.maps?.places),
-    hasPlaceClass: Boolean(window.google?.maps?.places?.Place)
-  });
-
   if (window.google?.maps?.places?.Place) {
     placesLibrary = { Place: window.google.maps.places.Place };
-    debugPlaces("using existing google.maps.places.Place", { hasSearchByText: typeof placesLibrary.Place?.searchByText === "function" });
     return placesLibrary;
   }
 
@@ -1376,11 +1324,6 @@ async function ensurePlacesLibrary() {
   }
 
   placesLibrary = await google.maps.importLibrary("places");
-  debugPlaces("importLibrary('places') resolved", {
-    keys: Object.keys(placesLibrary || {}),
-    hasPlace: Boolean(placesLibrary?.Place),
-    hasSearchByText: typeof placesLibrary?.Place?.searchByText === "function"
-  });
   return placesLibrary;
 }
 
@@ -1477,7 +1420,6 @@ async function searchPlacesOnMap() {
 
   try {
     setPlaceSearchStatus(`Searching Places API (New) for "${query}"...`, "info");
-    debugPlaces("search started", { query, primaryType, radiusKm, mapReady, hasMap: Boolean(map), mapCenter: getLatLngLiteral(map.getCenter()) });
     const { Place } = await ensurePlacesLibrary();
     if (typeof Place?.searchByText !== "function") {
       throw new Error("Places API (New) searchByText is unavailable. Enable Places API (New) for this key and confirm Maps JavaScript v=weekly loaded the places library.");
@@ -1504,28 +1446,12 @@ async function searchPlacesOnMap() {
       language: "en-AU",
       region: "au"
     };
-
-    debugPlaces("searchByText request", { ...request, radiusKm, locationBias: getLatLngLiteral(center) });
     const response = await Place.searchByText(request);
     const places = extractPlacesFromSearchResponse(response);
-    debugPlaces("searchByText response", {
-      responseKeys: Object.keys(response || {}),
-      placesPropertyCount: Array.isArray(response?.places) ? response.places.length : null,
-      extractedPlaces: places.length
-    });
-    console.table(places.map(place => ({
-      id: place.id || place.placeId || "",
-      name: getPlaceDisplayName(place),
-      address: getPlaceField(place, "formattedAddress"),
-      lat: getLatLngLiteral(place.location)?.lat ?? "",
-      lng: getLatLngLiteral(place.location)?.lng ?? "",
-      primaryType: place.primaryType || ""
-    })));
     renderPlaceMarkers(places);
     setPlaceSearchStatus(`Showing ${places.length} Google Places result${places.length === 1 ? "" : "s"}.`, places.length ? "success" : "warning");
     if (!places.length) toast("No Google Places results found for this map area.");
   } catch (error) {
-    debugPlaces("search failed", { name: error?.name, message: error?.message, stack: error?.stack });
     console.error("Places API (New) search failed:", error);
     setPlaceSearchStatus("Places search failed. Check API enablement, billing and key restrictions.", "error");
     toast("Places search failed. Check the console for details.");
@@ -1535,15 +1461,11 @@ async function searchPlacesOnMap() {
 function renderPlaceMarkers(places = []) {
   clearPlaceMarkers();
   if (!map || !window.google?.maps) {
-    debugPlaces("render skipped", { hasMap: Boolean(map), hasGoogleMaps: Boolean(window.google?.maps) });
     return;
   }
-
-  debugPlaces("rendering place markers", { requestedPlaces: places.length });
   places.forEach((place, index) => {
     const location = getLatLngLiteral(place.location);
     if (!location) {
-      debugPlaces("place skipped without location", { index, name: getPlaceDisplayName(place), id: place.id || place.placeId || "" });
       return;
     }
 
@@ -1568,12 +1490,15 @@ function renderPlaceMarkers(places = []) {
     placeMarkers.push(marker);
   });
 
-  debugPlaces("place markers rendered", { markerCount: placeMarkers.length, cachedPlaces: placesByKey.size });
+  if (placeMarkers.length === 1) {
+    map.panTo(placeMarkers[0].getPosition());
+    map.setZoom(Math.max(map.getZoom() || 0, 15));
+    return;
+  }
 
-  if (placeMarkers.length) {
+  if (placeMarkers.length > 1) {
     const bounds = new google.maps.LatLngBounds();
     placeMarkers.forEach(marker => bounds.extend(marker.getPosition()));
-    markers.forEach(marker => bounds.extend(marker.getPosition()));
     map.fitBounds(bounds, 64);
   }
 }
@@ -1845,7 +1770,6 @@ function ensureWipColumns(columns = []) {
 
 function scheduleSettingsSave() {
   clearTimeout(settingsSaveTimer);
-  console.debug("[settings-autosave] scheduled", { scope: getActiveSettingsScope(), wipColumns: [...(db.settings.wipColumns || [])] });
   settingsSaveTimer = setTimeout(saveSettings, 450);
 }
 
@@ -1858,12 +1782,6 @@ async function saveSettings() {
   if (activeSettingsScope !== "types") db.settings.customerTypes = customerTypes;
   if (activeSettingsScope !== "statuses") db.settings.customerStatuses = customerStatuses;
   if (activeSettingsScope !== "wipColumns") db.settings.wipColumns = wipColumns;
-
-  console.debug("[settings-autosave] saving", {
-    activeSettingsScope,
-    localWipColumns: [...(db.settings.wipColumns || [])],
-    payloadWipColumns: wipColumns
-  });
 
   try {
     await setDoc(doc(firestore, "settings", "global"), {
@@ -1926,8 +1844,6 @@ function renderWipBoard() {
   if (getActiveSettingsScope() !== "wipColumns") db.settings.wipColumns = columns;
 
   const buckets = getWipBoardBuckets(columns);
-  debugWipBoard(columns, buckets);
-
   host.innerHTML = columns.map(column => {
     const customers = getCustomersForWipColumn(column, buckets);
     return `
@@ -1948,7 +1864,6 @@ function renderWipBoard() {
     `;
   }).join("");
 
-  debugRenderedWipBoard(columns, buckets);
   initWipSortables();
 }
 
@@ -1981,86 +1896,6 @@ function getWipCustomerHaystack(customer = {}) {
     ...(customer.addresses || []).flatMap(address => [address.label, address.street, address.suburb, address.state, address.postcode, address.country])
   ].join(" ").toLowerCase();
 }
-
-function getWipDebugRows(columns, buckets) {
-  const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
-  const bucketedIds = new Set([...buckets.values()].flat().map(customer => customer.id));
-
-  return db.customers.map(customer => {
-    const details = getWipResolutionDetails(customer, columns);
-    const haystack = getWipCustomerHaystack(customer);
-    const searchMatches = !search || haystack.includes(search);
-
-    return {
-      id: customer.id,
-      companyName: getCustomerDisplayName(customer) || "(blank)",
-      rawWipColumn: customer.wipColumn || "(blank)",
-      resolvedColumn: details.resolvedColumn,
-      matchedBy: details.matchedBy,
-      searchMatches,
-      expectedOnWip: searchMatches,
-      bucketedOnWip: bucketedIds.has(customer.id),
-      wipOrder: customer.wipOrder
-    };
-  });
-}
-
-function countBy(values) {
-  return values.reduce((counts, value) => {
-    const key = String(value || "(blank)");
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, {});
-}
-
-function debugWipBoard(columns, buckets) {
-  const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
-  const rows = getWipDebugRows(columns, buckets);
-  const expectedRows = rows.filter(row => row.expectedOnWip);
-  const missingRows = expectedRows.filter(row => !row.bucketedOnWip);
-  const litRows = rows.filter(row => row.companyName.toLowerCase().includes("lit 3d"));
-  const bucketCounts = Object.fromEntries([...buckets.entries()].map(([column, customers]) => [column, customers.length]));
-
-  console.warn("[wip-debug] board bucket audit", {
-    columns,
-    search,
-    loadedCustomers: db.customers.length,
-    expectedOnWip: expectedRows.length,
-    bucketedCards: Object.values(bucketCounts).reduce((total, count) => total + count, 0),
-    missingFromBuckets: missingRows.length,
-    rawWipColumnCounts: countBy(db.customers.map(c => c.wipColumn || "(blank)")),
-    resolvedColumnCounts: countBy(rows.map(row => row.resolvedColumn || "(blank)")),
-    bucketCounts
-  });
-  console.table(rows);
-
-  if (litRows.length) console.warn("[wip-debug] Lit 3D audit", litRows);
-  if (missingRows.length) console.warn("[wip-debug] customers missing from WIP buckets", missingRows);
-}
-
-function debugRenderedWipBoard(columns, buckets) {
-  const renderedCards = [...document.querySelectorAll("#wipBoard .wip-card")].map(card => ({
-    id: card.dataset.id || "",
-    companyName: card.querySelector("strong")?.textContent?.trim() || "(blank)",
-    renderedColumn: card.closest(".wip-column-list")?.dataset?.wipColumn || "(unknown)"
-  }));
-  const renderedKeys = new Set(renderedCards.map(card => `${card.id}::${card.renderedColumn}`));
-  const rows = getWipDebugRows(columns, buckets).filter(row => row.expectedOnWip);
-  const missingFromDom = rows.filter(row => !renderedKeys.has(`${row.id}::${row.resolvedColumn}`));
-  const litRows = renderedCards.filter(card => card.companyName.toLowerCase().includes("lit 3d"));
-
-  console.warn("[wip-debug] board DOM audit", {
-    expectedOnWip: rows.length,
-    renderedCards: renderedCards.length,
-    missingFromDom: missingFromDom.length,
-    renderedColumnCounts: countBy(renderedCards.map(card => card.renderedColumn)),
-    duplicateRenderedIds: Object.entries(countBy(renderedCards.map(card => card.id))).filter(([, count]) => count > 1).map(([id, count]) => ({ id, count }))
-  });
-
-  if (litRows.length) console.warn("[wip-debug] rendered Lit 3D cards", litRows);
-  if (missingFromDom.length) console.warn("[wip-debug] customers bucketed but not rendered in DOM", missingFromDom);
-}
-
 
 function getDefaultWipColumn(columns = ensureWipColumns(db.settings.wipColumns)) {
   return columns.find(c => c.toLowerCase().trim() === "un-assigned") ||
@@ -2258,7 +2093,6 @@ function renderWipColumnsSettings() {
     onInput(index, value) {
       const oldColumn = db.settings.wipColumns[index];
       db.settings.wipColumns[index] = value;
-      console.debug("[settings-autosave] WIP column input", { index, oldColumn, value, wipColumns: [...db.settings.wipColumns] });
       updateCustomersForRenamedWipColumn(oldColumn, value);
       renderWipBoard();
       scheduleSettingsSave();
@@ -2295,7 +2129,6 @@ function initWipColumnSettingsSortable() {
       host.querySelectorAll('[data-action="remove-wip-column"]').forEach((button, index) => {
         button.setAttribute("data-index", String(index));
       });
-      console.debug("[settings-autosave] WIP columns reordered", { wipColumns: [...db.settings.wipColumns] });
       renderWipBoard();
       scheduleSettingsSave();
     }
@@ -2364,7 +2197,6 @@ function renderSettingsList({ hostId, items, lockedValue, label, inputAttr, remo
 
       if (lockedValue === null) {
         db.settings.wipColumns = [...host.querySelectorAll(`[${inputAttr}]`)].map(el => el.value);
-        console.debug("[settings-autosave] WIP blur captured DOM values", { index, wipColumns: [...db.settings.wipColumns] });
       }
 
       if (onBlur) await onBlur(input, index);
