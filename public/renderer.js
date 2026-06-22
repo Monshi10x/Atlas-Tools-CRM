@@ -1465,7 +1465,13 @@ function ensureLeadStatus(statuses = []) {
 
 function ensureWipColumns(columns = []) {
   const clean = [...new Set(columns.map(x => String(x || "").trim()).filter(Boolean))];
-  return clean.length ? clean : ["un-allocated", "samples sent", "lead to be contacted"];
+  const withDefaults = clean.length ? clean : ["un-assigned", "samples sent", "lead to be contacted"];
+  const hasFallback = withDefaults.some(column => {
+    const normalized = column.toLowerCase().trim();
+    return normalized === "un-assigned" || normalized === "un-allocated";
+  });
+
+  return hasFallback ? withDefaults : ["un-assigned", ...withDefaults];
 }
 
 function scheduleSettingsSave() {
@@ -1611,14 +1617,15 @@ function debugWipBoard(columns, buckets) {
   });
   const missingRows = rows.filter(row => row.searchMatches && !row.visibleOnBoard);
 
-  console.debug("[wip-debug] board render", {
+  const summary = {
     columns,
     search,
     loadedCustomers: db.customers.length,
     visibleCards: visibleIds.size,
     missingDespiteSearchMatch: missingRows.length,
     bucketCounts: Object.fromEntries([...buckets.entries()].map(([column, customers]) => [column, customers.length]))
-  });
+  };
+  console.warn("[wip-debug] board render summary", summary);
 
   if (missingRows.length) {
     console.warn("[wip-debug] customers missing from WIP board", missingRows);
