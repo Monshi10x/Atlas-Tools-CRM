@@ -911,3 +911,29 @@ textarea { min-height: 84px; resize: vertical; }
 .settings-drag-handle:active {
   cursor: grabbing;
 }
+
+.places-panel {
+  border: 1px solid #000;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.03);
+  box-shadow: var(--chip-shadow);
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.compact-title {
+  margin-bottom: 10px;
+}
+
+.places-toolbar {
+  margin-bottom: 8px;
+}
+
+#placeSearchStatus[data-level="success"] { color: #8be28b; }
+#placeSearchStatus[data-level="warning"] { color: #ffd56a; }
+#placeSearchStatus[data-level="error"] { color: #ff8a8a; }
+
+.place-info a {
+  color: #0b5bd3;
+  font-weight: 800;
+}

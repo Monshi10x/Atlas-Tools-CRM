@@ -114,6 +114,34 @@
             <button class="btn ghost small" id="clearFiltersMap">Clear Filters</button>
           </div>
 
+          <div class="places-panel">
+            <div class="panel-title compact-title">
+              <div>
+                <h3>Google Places</h3>
+                <div class="muted">Search Places API (New) results and add them as customers.</div>
+              </div>
+            </div>
+            <div class="form-row">
+              <label for="placeSearchQuery">Place Search</label>
+              <input id="placeSearchQuery" type="search" placeholder="Business, supplier, cafe, sign shop..." />
+            </div>
+            <div class="form-row two">
+              <div>
+                <label for="placeSearchType">Primary Type</label>
+                <input id="placeSearchType" placeholder="Optional: store" />
+              </div>
+              <div>
+                <label for="placeSearchRadius">Radius (km)</label>
+                <input id="placeSearchRadius" type="number" min="1" max="50" value="10" />
+              </div>
+            </div>
+            <div class="toolbar compact places-toolbar">
+              <button class="btn primary small" id="searchPlacesButton" type="button">Show Places</button>
+              <button class="btn ghost small" id="clearPlacesButton" type="button">Clear Places</button>
+            </div>
+            <div class="muted" id="placeSearchStatus">Places are shown as blue pins.</div>
+          </div>
+
           <div class="mini-card">
             <div class="card-line"><strong>Total Customers:</strong> <span id="countCustomers">0</span></div>
             <div class="card-line"><strong>Visible Customers:</strong> <span id="countVisibleCustomers">0</span></div>

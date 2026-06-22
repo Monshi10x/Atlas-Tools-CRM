@@ -54,6 +54,9 @@ let map = null;
 let geocoder = null;
 let infoWindow = null;
 let markers = [];
+let placeMarkers = [];
+let placesByKey = new Map();
+let placesLibrary = null;
 let appConsoleEntries = [];
 let autocompleteInstances = [];
 let mapScriptLoading = false;
@@ -221,6 +224,14 @@ function bindEvents() {
   bindIfExists("fitMap", "click", () => fitMapToMarkers(true));
   bindIfExists("clearFiltersMap", "click", clearFilters);
   bindIfExists("clearFiltersCards", "click", clearFilters);
+  bindIfExists("searchPlacesButton", "click", searchPlacesOnMap);
+  bindIfExists("clearPlacesButton", "click", clearPlaceMarkers);
+  bindIfExists("placeSearchQuery", "keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchPlacesOnMap();
+    }
+  });
 
   bindIfExists("importCsvButton", "click", () => document.getElementById("csvFileInput")?.click());
   bindIfExists("exportCsvButton", "click", exportCsv);
@@ -276,6 +287,7 @@ function handleDocumentClick(event) {
   if (action === "remove-address") removeEditorAddress(Number(target.dataset.index));
   if (action === "geocode-address") geocodeEditorAddress(Number(target.dataset.index));
   if (action === "move-pin") enablePinMove(target.dataset.customerId, target.dataset.addressId);
+  if (action === "add-place-customer") addPlaceAsCustomer(target.dataset.placeKey);
   if (action === "remove-type") removeCustomerType(Number(target.dataset.index));
   if (action === "remove-status") removeCustomerStatus(Number(target.dataset.index));
   if (action === "remove-wip-column") removeWipColumn(Number(target.dataset.index));
@@ -1206,6 +1218,7 @@ function reloadMap() {
   geocoder = null;
   infoWindow = null;
   markers = [];
+  clearPlaceMarkers();
   mapReady = false;
   mapInitialising = false;
 
@@ -1258,6 +1271,7 @@ async function initMap() {
     renderMapMarkers();
     fitMapToMarkers(false);
     setTimeout(initAddressAutocompletes, 250);
+    setPlaceSearchStatus("Ready to search Places API (New).", "info");
 
     console.info("Google Maps initialised successfully on startup.");
   } catch (error) {
@@ -1312,6 +1326,231 @@ function enablePinMove(customerId, addressId) {
   activeMovePin = { marker, baseIcon, timer };
   infoWindow.close();
   toast("Move mode enabled. Drag the pulsing pin to save its new location.");
+}
+
+async function ensurePlacesLibrary() {
+  if (placesLibrary) return placesLibrary;
+
+  if (!window.google?.maps?.importLibrary) {
+    throw new Error("Google Maps importLibrary is unavailable. Check that Maps JavaScript API v=weekly loaded successfully.");
+  }
+
+  placesLibrary = await google.maps.importLibrary("places");
+  return placesLibrary;
+}
+
+function setPlaceSearchStatus(message, level = "info") {
+  const el = document.getElementById("placeSearchStatus");
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.level = level;
+}
+
+function getLatLngLiteral(location) {
+  if (!location) return null;
+  const lat = typeof location.lat === "function" ? location.lat() : location.lat;
+  const lng = typeof location.lng === "function" ? location.lng() : location.lng;
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return null;
+  return { lat: Number(lat), lng: Number(lng) };
+}
+
+function getPlaceDisplayName(place = {}) {
+  const displayName = place.displayName;
+  if (typeof displayName === "string") return displayName;
+  return displayName?.text || place.name || "Unnamed Place";
+}
+
+function getPlaceKey(place, fallbackIndex = 0) {
+  return place.id || place.placeId || `place-${Date.now()}-${fallbackIndex}`;
+}
+
+function getPlaceField(place, fieldName) {
+  const value = place?.[fieldName];
+  if (typeof value === "string") return value;
+  return value?.text || "";
+}
+
+function getAddressComponent(components = [], type, short = false) {
+  const component = components.find(item => item.types?.includes(type));
+  if (!component) return "";
+  return short ? (component.shortText || component.short_name || component.longText || component.long_name || "") : (component.longText || component.long_name || component.shortText || component.short_name || "");
+}
+
+function buildAddressFromPlace(place = {}) {
+  const components = place.addressComponents || [];
+  const streetNumber = getAddressComponent(components, "street_number");
+  const route = getAddressComponent(components, "route");
+  const street = [streetNumber, route].filter(Boolean).join(" ") || getPlaceField(place, "formattedAddress");
+  const suburb = getAddressComponent(components, "locality") ||
+    getAddressComponent(components, "postal_town") ||
+    getAddressComponent(components, "sublocality") ||
+    getAddressComponent(components, "sublocality_level_1") ||
+    getAddressComponent(components, "administrative_area_level_2");
+  const location = getLatLngLiteral(place.location);
+
+  return {
+    id: uid(),
+    label: "Google Place",
+    street,
+    suburb,
+    state: getAddressComponent(components, "administrative_area_level_1", true),
+    postcode: getAddressComponent(components, "postal_code"),
+    country: getAddressComponent(components, "country"),
+    lat: location?.lat ?? null,
+    lng: location?.lng ?? null
+  };
+}
+
+async function searchPlacesOnMap() {
+  if (!map) {
+    toast("Google Maps must be loaded before searching places.");
+    return;
+  }
+
+  const query = document.getElementById("placeSearchQuery")?.value.trim() || "business";
+  const primaryType = document.getElementById("placeSearchType")?.value.trim();
+  const radiusKm = Math.min(Math.max(Number(document.getElementById("placeSearchRadius")?.value || 10), 1), 50);
+
+  try {
+    setPlaceSearchStatus("Searching Places API (New)...", "info");
+    const { Place } = await ensurePlacesLibrary();
+    const center = map.getCenter();
+    const centerLiteral = getLatLngLiteral(center) || defaultCenter;
+    const fields = [
+      "id",
+      "displayName",
+      "formattedAddress",
+      "location",
+      "addressComponents",
+      "nationalPhoneNumber",
+      "internationalPhoneNumber",
+      "websiteURI",
+      "primaryType"
+    ];
+    const request = {
+      textQuery: query,
+      fields,
+      maxResultCount: 20,
+      locationBias: {
+        center: centerLiteral,
+        radius: radiusKm * 1000
+      }
+    };
+
+    if (primaryType) request.includedType = primaryType;
+
+    const response = await Place.searchByText(request);
+    const places = response?.places || [];
+    renderPlaceMarkers(places);
+    setPlaceSearchStatus(`Showing ${places.length} Google Places result${places.length === 1 ? "" : "s"}.`, places.length ? "success" : "warning");
+    if (!places.length) toast("No Google Places results found for this map area.");
+  } catch (error) {
+    console.error("Places API (New) search failed:", error);
+    setPlaceSearchStatus("Places search failed. Check API enablement, billing and key restrictions.", "error");
+    toast("Places search failed. Check the console for details.");
+  }
+}
+
+function renderPlaceMarkers(places = []) {
+  clearPlaceMarkers();
+  if (!map || !window.google?.maps) return;
+
+  places.forEach((place, index) => {
+    const location = getLatLngLiteral(place.location);
+    if (!location) return;
+
+    const placeKey = getPlaceKey(place, index);
+    placesByKey.set(placeKey, place);
+
+    const marker = new google.maps.Marker({
+      position: location,
+      map,
+      title: getPlaceDisplayName(place),
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 8,
+        fillColor: "#2f80ed",
+        fillOpacity: 1,
+        strokeColor: "#ffffff",
+        strokeWeight: 2
+      }
+    });
+
+    marker.addListener("click", () => openPlaceInfoWindow(placeKey, marker));
+    placeMarkers.push(marker);
+  });
+
+  if (placeMarkers.length) {
+    const bounds = new google.maps.LatLngBounds();
+    placeMarkers.forEach(marker => bounds.extend(marker.getPosition()));
+    markers.forEach(marker => bounds.extend(marker.getPosition()));
+    map.fitBounds(bounds, 64);
+  }
+}
+
+function clearPlaceMarkers() {
+  placeMarkers.forEach(marker => marker.setMap(null));
+  placeMarkers = [];
+  placesByKey = new Map();
+  setPlaceSearchStatus("Places are shown as blue pins.", "info");
+}
+
+function openPlaceInfoWindow(placeKey, marker) {
+  const place = placesByKey.get(placeKey);
+  if (!place || !infoWindow) return;
+
+  infoWindow.setContent(`
+    <div class="map-info place-info">
+      <h3>${esc(getPlaceDisplayName(place))}</h3>
+      <p><strong>Address:</strong> ${esc(getPlaceField(place, "formattedAddress") || "-")}</p>
+      <p><strong>Phone:</strong> ${esc(place.nationalPhoneNumber || place.internationalPhoneNumber || "-")}</p>
+      <p><strong>Type:</strong> ${esc(place.primaryType || "-")}</p>
+      ${place.websiteURI ? `<p><strong>Website:</strong> <a href="${esc(place.websiteURI)}" target="_blank" rel="noopener">Open website</a></p>` : ""}
+      <button data-action="add-place-customer" data-place-key="${esc(placeKey)}">Add as Customer</button>
+    </div>
+  `);
+  infoWindow.open({ map, anchor: marker });
+}
+
+async function addPlaceAsCustomer(placeKey) {
+  const place = placesByKey.get(placeKey);
+  if (!place) {
+    toast("That Google Place is no longer available. Search again and retry.");
+    return;
+  }
+
+  const placeId = place.id || place.placeId || "";
+  const name = getPlaceDisplayName(place);
+  const address = buildAddressFromPlace(place);
+  const payload = {
+    companyName: name,
+    customerType: db.settings.customerTypes.includes("Other") ? "Other" : db.settings.customerTypes[0] || "Other",
+    status: db.settings.customerStatuses.includes("Lead") ? "Lead" : db.settings.customerStatuses[0] || "Lead",
+    phone: place.nationalPhoneNumber || place.internationalPhoneNumber || "",
+    email: "",
+    notes: placeId ? `Added from Google Places. Place ID: ${placeId}` : "Added from Google Places.",
+    lastContacted: "",
+    googlePlaceId: placeId,
+    googlePlaceWebsite: place.websiteURI || "",
+    contacts: [],
+    addresses: [address],
+    wipColumn: getDefaultWipColumn(),
+    wipOrder: 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    const ref = await addDoc(collection(firestore, "customers"), payload);
+    selectedCustomerId = ref.id;
+    infoWindow?.close();
+    toast(`${name} added as a customer.`);
+    renderEditor();
+    switchTab("editorTab");
+  } catch (error) {
+    console.error("Adding Google Place as customer failed:", error);
+    toast("Could not add that Google Place as a customer.");
+  }
 }
 
 function renderMapMarkers() {
@@ -2176,24 +2415,6 @@ function updateSavePulse() {
   const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
   if (dirty) scheduleEditorAutosave();
 }
-
-function scheduleEditorAutosave() {
-  clearTimeout(editorAutosaveTimer);
-  setEditorAutosaveStatus("Saving...");
-  editorAutosaveTimer = setTimeout(() => saveEditorCustomer({ silent: true }), 350);
-}
-
-function setEditorAutosaveStatus(message) {
-  const el = document.getElementById("editorAutosaveStatus");
-  if (el) el.textContent = message || "Autosaves changes";
-}
-
-function updateSavePulse() {
-  if (!window.editorDraft) return;
-  const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
-  if (dirty) scheduleEditorAutosave();
-}
-
 
 
 
