@@ -337,14 +337,31 @@ function startFirestoreListeners() {
   }, (error) => console.error("Settings listener failed:", error));
 
   customersUnsubscribe = onSnapshot(collection(firestore, "customers"), (snap) => {
-    db.customers = snap.docs
-      .map(d => normalizeCustomer({ id: d.id, ...d.data() }))
+    const customerSnapshotRows = snap.docs.map(d => {
+      const data = d.data();
+      const normalized = normalizeCustomer({ ...data, id: d.id });
+      return {
+        firestoreId: d.id,
+        dataId: data.id || "",
+        companyName: normalized.companyName || "(blank)",
+        rawWipColumn: data.wipColumn || "(blank)",
+        normalizedWipColumn: normalized.wipColumn || "(blank)",
+        wipOrder: normalized.wipOrder,
+        normalized
+      };
+    });
+
+    db.customers = customerSnapshotRows
+      .map(row => row.normalized)
       .sort((a, b) => (a.companyName || "").localeCompare(b.companyName || ""));
-    console.debug("[wip-debug] customers snapshot", {
+
+    console.warn("[wip-debug] customers snapshot", {
       firestoreDocs: snap.docs.length,
       normalizedCustomers: db.customers.length,
-      emptyCompanyName: db.customers.filter(c => !c.companyName).length
+      emptyCompanyName: db.customers.filter(c => !c.companyName).length,
+      wipColumnCounts: countBy(db.customers.map(c => c.wipColumn || "(blank)"))
     });
+    console.table(customerSnapshotRows.map(({ normalized, ...row }) => row));
     db.updatedAt = new Date().toISOString();
     if (!isFocusWithin("editorHost")) renderEditor();
     preserveFocus(renderAll);
@@ -1599,6 +1616,7 @@ function renderWipBoard() {
     `;
   }).join("");
 
+  debugRenderedWipBoard(columns, buckets);
   initWipSortables();
 }
 
@@ -1632,10 +1650,11 @@ function getWipCustomerHaystack(customer = {}) {
   ].join(" ").toLowerCase();
 }
 
-function debugWipBoard(columns, buckets) {
+function getWipDebugRows(columns, buckets) {
   const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
-  const visibleIds = new Set([...buckets.values()].flat().map(customer => customer.id));
-  const rows = db.customers.map(customer => {
+  const bucketedIds = new Set([...buckets.values()].flat().map(customer => customer.id));
+
+  return db.customers.map(customer => {
     const details = getWipResolutionDetails(customer, columns);
     const haystack = getWipCustomerHaystack(customer);
     const searchMatches = !search || haystack.includes(search);
@@ -1647,27 +1666,67 @@ function debugWipBoard(columns, buckets) {
       resolvedColumn: details.resolvedColumn,
       matchedBy: details.matchedBy,
       searchMatches,
-      visibleOnBoard: visibleIds.has(customer.id),
+      expectedOnWip: searchMatches,
+      bucketedOnWip: bucketedIds.has(customer.id),
       wipOrder: customer.wipOrder
     };
   });
-  const missingRows = rows.filter(row => row.searchMatches && !row.visibleOnBoard);
+}
 
-  const summary = {
+function countBy(values) {
+  return values.reduce((counts, value) => {
+    const key = String(value || "(blank)");
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function debugWipBoard(columns, buckets) {
+  const search = (document.getElementById("wipSearch")?.value || "").toLowerCase().trim();
+  const rows = getWipDebugRows(columns, buckets);
+  const expectedRows = rows.filter(row => row.expectedOnWip);
+  const missingRows = expectedRows.filter(row => !row.bucketedOnWip);
+  const litRows = rows.filter(row => row.companyName.toLowerCase().includes("lit 3d"));
+  const bucketCounts = Object.fromEntries([...buckets.entries()].map(([column, customers]) => [column, customers.length]));
+
+  console.warn("[wip-debug] board bucket audit", {
     columns,
     search,
     loadedCustomers: db.customers.length,
-    visibleCards: visibleIds.size,
-    missingDespiteSearchMatch: missingRows.length,
-    bucketCounts: Object.fromEntries([...buckets.entries()].map(([column, customers]) => [column, customers.length]))
-  };
-  console.warn("[wip-debug] board render summary", summary);
-
-  if (missingRows.length) {
-    console.warn("[wip-debug] customers missing from WIP board", missingRows);
-  }
-
+    expectedOnWip: expectedRows.length,
+    bucketedCards: Object.values(bucketCounts).reduce((total, count) => total + count, 0),
+    missingFromBuckets: missingRows.length,
+    rawWipColumnCounts: countBy(db.customers.map(c => c.wipColumn || "(blank)")),
+    resolvedColumnCounts: countBy(rows.map(row => row.resolvedColumn || "(blank)")),
+    bucketCounts
+  });
   console.table(rows);
+
+  if (litRows.length) console.warn("[wip-debug] Lit 3D audit", litRows);
+  if (missingRows.length) console.warn("[wip-debug] customers missing from WIP buckets", missingRows);
+}
+
+function debugRenderedWipBoard(columns, buckets) {
+  const renderedCards = [...document.querySelectorAll("#wipBoard .wip-card")].map(card => ({
+    id: card.dataset.id || "",
+    companyName: card.querySelector("strong")?.textContent?.trim() || "(blank)",
+    renderedColumn: card.closest(".wip-column-list")?.dataset?.wipColumn || "(unknown)"
+  }));
+  const renderedKeys = new Set(renderedCards.map(card => `${card.id}::${card.renderedColumn}`));
+  const rows = getWipDebugRows(columns, buckets).filter(row => row.expectedOnWip);
+  const missingFromDom = rows.filter(row => !renderedKeys.has(`${row.id}::${row.resolvedColumn}`));
+  const litRows = renderedCards.filter(card => card.companyName.toLowerCase().includes("lit 3d"));
+
+  console.warn("[wip-debug] board DOM audit", {
+    expectedOnWip: rows.length,
+    renderedCards: renderedCards.length,
+    missingFromDom: missingFromDom.length,
+    renderedColumnCounts: countBy(renderedCards.map(card => card.renderedColumn)),
+    duplicateRenderedIds: Object.entries(countBy(renderedCards.map(card => card.id))).filter(([, count]) => count > 1).map(([id, count]) => ({ id, count }))
+  });
+
+  if (litRows.length) console.warn("[wip-debug] rendered Lit 3D cards", litRows);
+  if (missingFromDom.length) console.warn("[wip-debug] customers bucketed but not rendered in DOM", missingFromDom);
 }
 
 
@@ -1721,7 +1780,6 @@ function initWipSortables() {
   }
 
   const lists = document.querySelectorAll(".wip-column-list");
-  console.debug("[wip-sortable] initializing", { lists: lists.length, sortableLoaded: Boolean(window.Sortable) });
 
   lists.forEach(list => {
     wipSortableInstances.push(new window.Sortable(list, {
@@ -1743,8 +1801,7 @@ function initWipSortables() {
       onChange: function() {
         animateWipCardMoves();
       },
-      onEnd: function(event) {
-        console.debug("[wip-sortable] drag ended", { from: event.from?.dataset?.wipColumn, to: event.to?.dataset?.wipColumn, oldIndex: event.oldIndex, newIndex: event.newIndex });
+      onEnd: function() {
         animateWipCardMoves();
         saveWipBoardOrder();
       },
@@ -2119,6 +2176,24 @@ function updateSavePulse() {
   const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
   if (dirty) scheduleEditorAutosave();
 }
+
+function scheduleEditorAutosave() {
+  clearTimeout(editorAutosaveTimer);
+  setEditorAutosaveStatus("Saving...");
+  editorAutosaveTimer = setTimeout(() => saveEditorCustomer({ silent: true }), 350);
+}
+
+function setEditorAutosaveStatus(message) {
+  const el = document.getElementById("editorAutosaveStatus");
+  if (el) el.textContent = message || "Autosaves changes";
+}
+
+function updateSavePulse() {
+  if (!window.editorDraft) return;
+  const dirty = editorSnapshot(readBaseEditorIntoDraft()) !== editorCleanSnapshot;
+  if (dirty) scheduleEditorAutosave();
+}
+
 
 
 
